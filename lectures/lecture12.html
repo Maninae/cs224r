@@ -1,0 +1,92 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Lecture 12: Multi-Task & Goal-Conditioned RL — CS224R</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=IBM+Plex+Mono:wght@400;500&family=Source+Sans+3:ital,wght@0,300;0,400;0,600;0,700;1,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.css">
+<link rel="stylesheet" href="../styles/shared.css">
+</head>
+<body>
+
+<!-- Mobile menu -->
+<button class="menu-toggle" onclick="toggleSidebar()" aria-label="Toggle menu">
+  <span></span>
+</button>
+<div class="menu-overlay" onclick="toggleSidebar()"></div>
+
+<!-- Progress bar -->
+<div class="progress-bar"><div class="bar"></div></div>
+
+<!-- Sidebar -->
+<aside class="sidebar">
+  <div class="sidebar-header">
+    <div class="course-code">Stanford CS224R</div>
+    <h1><a href="../index.html">Deep Reinforcement Learning</a></h1>
+    <div class="term">Spring 2025</div>
+  </div>
+  <nav class="sidebar-nav" id="sidebarNav"></nav>
+  <div class="sidebar-footer">
+    <a href="../index.html">&larr; All Modules</a>
+  </div>
+</aside>
+
+<!-- Main -->
+<div class="main">
+  <div class="lecture-header">
+    <div class="lecture-eyebrow">Lecture 12</div>
+    <h2>Multi-Task & Goal-Conditioned RL</h2>
+    <p class="lecture-desc">Training agents that generalize across tasks: universal value functions, hindsight experience replay, and goal-conditioned policies.</p>
+    <div class="lecture-tags">
+      <span class="lecture-tag">Multi-Task RL</span>
+      <span class="lecture-tag">Goal-Conditioned</span>
+      <span class="lecture-tag">HER</span>
+      <span class="lecture-tag">Universal Value Functions</span>
+    </div>
+    <a class="lecture-pdf-link" href="../slides/cs224r_2025_lecture12.pdf" target="_blank">
+      <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
+      Original PDF slides
+    </a>
+  </div>
+
+  <article class="lecture-article">
+    <!-- Content will be added in Phase 3 -->
+  </article>
+
+  <nav class="lecture-nav">
+    <a class="prev" href="lecture11.html">
+      <span class="nav-dir">Previous</span>
+      <span class="nav-title">Model-Based RL</span>
+    </a>
+    <a class="next" href="lecture13.html">
+      <span class="nav-dir">Next</span>
+      <span class="nav-title">Meta-RL</span>
+    </a>
+  </nav>
+</div>
+
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/katex.min.js"></script>
+<script defer src="https://cdn.jsdelivr.net/npm/katex@0.16.11/dist/contrib/auto-render.min.js"
+  onload="renderMathInElement(document.body, {
+    delimiters: [
+      {left: '$$', right: '$$', display: true},
+      {left: '$', right: '$', display: false}
+    ],
+    macros: {
+      '\\E': '\\mathbb{E}',
+      '\\R': '\\mathbb{R}',
+      '\\Vpi': 'V^{\\pi}',
+      '\\Qpi': 'Q^{\\pi}',
+      '\\Vstar': 'V^{*}',
+      '\\Qstar': 'Q^{*}',
+      '\\piref': '\\pi_{\\text{ref}}',
+      '\\Dkl': 'D_{\\text{KL}}',
+      '\\piB': '\\pi_{\\beta}'
+    }
+  });"></script>
+<script src="../scripts/lecture.js"></script>
+</body>
+</html>

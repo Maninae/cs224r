@@ -1,0 +1,350 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CS224R — Deep Reinforcement Learning</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Instrument+Serif:ital@0;1&family=IBM+Plex+Mono:wght@400;500&family=Source+Sans+3:ital,wght@0,300;0,400;0,600;0,700;1,400&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="styles/shared.css">
+</head>
+<body class="page-index">
+
+<!-- Mobile menu -->
+<button class="menu-toggle" onclick="toggleSidebar()" aria-label="Toggle menu">
+  <span></span>
+</button>
+<div class="menu-overlay" onclick="toggleSidebar()"></div>
+
+<!-- Progress bar -->
+<div class="progress-bar"><div class="bar"></div></div>
+
+<!-- Sidebar -->
+<aside class="sidebar">
+  <div class="sidebar-header">
+    <div class="course-code">Stanford CS224R</div>
+    <h1>Deep Reinforcement Learning</h1>
+    <div class="term">Spring 2025</div>
+  </div>
+  <nav class="sidebar-nav" id="sidebarNav"></nav>
+  <div class="sidebar-footer">
+    <a href="https://cs224r.stanford.edu/" target="_blank" rel="noopener">Course homepage &nearr;</a>
+  </div>
+</aside>
+
+<!-- Main -->
+<div class="main">
+  <section class="hero">
+    <div class="hero-eyebrow">Learning Companion</div>
+    <h2>Deep Reinforcement Learning</h2>
+    <p>
+      A structured guide through Stanford's CS224R &mdash; from imitation learning and policy gradients
+      to offline RL, model-based methods, and sim-to-real transfer.
+    </p>
+    <div class="hero-stats">
+      <div class="hero-stat">
+        <div class="stat-num">10</div>
+        <div class="stat-label">Modules</div>
+      </div>
+      <div class="hero-stat">
+        <div class="stat-num">18</div>
+        <div class="stat-label">Lectures</div>
+      </div>
+      <div class="hero-stat">
+        <div class="stat-num">3</div>
+        <div class="stat-label">Guest Lectures</div>
+      </div>
+    </div>
+  </section>
+
+  <div class="content" id="content"></div>
+</div>
+
+<script>
+const modules = [
+  {
+    id: 'foundations',
+    num: '01',
+    title: 'Foundations',
+    subtitle: 'MDPs, rewards, and the deep RL landscape',
+    description: `
+      <p>An overview of the deep reinforcement learning landscape: the agent-environment loop, Markov Decision Processes, reward formulations, and the key challenges that motivate modern deep RL research. Sets the stage for the algorithms and techniques to follow.</p>
+    `,
+    lectures: [
+      { label: 'Lecture 1 — Course Intro + MDPs', file: 'lectures/lecture01.html' }
+    ],
+    readings: [],
+    prereqs: [
+      { label: 'Linear Algebra Review', sub: 'CS229 Notes', icon: '&#x1D465;', url: 'http://cs229.stanford.edu/section/cs229-linalg.pdf' },
+      { label: 'Probability Review', sub: 'CS229 Notes', icon: 'P', url: 'http://cs229.stanford.edu/section/cs229-prob.pdf' },
+      { label: 'Deep Learning Basics', sub: 'CS231n / CS229', icon: '&#x2202;', url: 'http://cs231n.github.io/' }
+    ]
+  },
+  {
+    id: 'imitation-learning',
+    num: '02',
+    title: 'Imitation Learning',
+    subtitle: 'Learning from demonstrations without reward signals',
+    description: `
+      <p>When reward functions are hard to specify, we can instead learn from expert demonstrations. Covers behavioral cloning, distribution shift (compounding errors), DAgger, and the theoretical foundations of why naive supervised learning on trajectories can fail.</p>
+    `,
+    lectures: [
+      { label: 'Lecture 2 — Imitation Learning', file: 'lectures/lecture02.html' }
+    ],
+    readings: []
+  },
+  {
+    id: 'policy-gradients',
+    num: '03',
+    title: 'Policy Gradients',
+    subtitle: 'REINFORCE, variance reduction, and the policy gradient theorem',
+    description: `
+      <p>A shift from value-based to policy-based methods. Derives the policy gradient theorem, the REINFORCE algorithm, and variance reduction techniques including baselines and reward-to-go. Discusses practical considerations for scaling policy gradients with deep networks.</p>
+    `,
+    lectures: [
+      { label: 'Lecture 3 — Policy Gradients', file: 'lectures/lecture03.html' }
+    ],
+    readings: []
+  },
+  {
+    id: 'actor-critic-q-learning',
+    num: '04',
+    title: 'Actor-Critic & Q-Learning',
+    subtitle: 'From on-policy to off-policy deep RL',
+    description: `
+      <p>Combines value estimation with policy optimization through actor-critic architectures. Progresses from on-policy methods to off-policy algorithms, covering advantage estimation, target networks, experience replay, and deep Q-learning (DQN and its variants).</p>
+    `,
+    lectures: [
+      { label: 'Lecture 4 — Actor-Critic Methods', file: 'lectures/lecture04.html' },
+      { label: 'Lecture 5 — Off-Policy Actor-Critic', file: 'lectures/lecture05.html' },
+      { label: 'Lecture 6 — Q-Learning', file: 'lectures/lecture06.html' }
+    ],
+    readings: []
+  },
+  {
+    id: 'offline-rl-reward-learning',
+    num: '05',
+    title: 'Offline RL & Reward Learning',
+    subtitle: 'Learning from fixed datasets and human preferences',
+    description: `
+      <p>When online interaction is expensive or dangerous, we can learn from pre-collected datasets. Covers the challenges of offline RL (distributional shift, overestimation), conservative algorithms (CQL, IQL), and learning reward functions from human preferences (RLHF).</p>
+    `,
+    lectures: [
+      { label: 'Lecture 7 — Offline RL', file: 'lectures/lecture07.html' },
+      { label: 'Lecture 8 — Reward Learning', file: 'lectures/lecture08.html' }
+    ],
+    readings: []
+  },
+  {
+    id: 'rl-for-lms',
+    num: '06',
+    title: 'RL for Language Models',
+    subtitle: 'Preference optimization and reasoning via RL',
+    description: `
+      <p>How reinforcement learning powers modern language model alignment and reasoning. Guest lectures covering Direct Preference Optimization (DPO) and its variants, plus how RL enables chain-of-thought reasoning in large language models.</p>
+    `,
+    lectures: [
+      { label: 'Lecture 9 — Preference Optimization (Guest: Archit Sharma)', file: 'lectures/lecture09.html' },
+      { label: 'Lecture 10 — RL for Reasoning (Guest: Aviral Kumar)', file: 'lectures/lecture10.html' }
+    ],
+    readings: []
+  },
+  {
+    id: 'model-based-rl',
+    num: '07',
+    title: 'Model-Based RL',
+    subtitle: 'Learning dynamics models for planning and imagination',
+    description: `
+      <p>Rather than learning a policy directly from rewards, model-based methods first learn a dynamics model of the environment, then use it for planning or policy improvement. Covers learned world models, model-predictive control, Dyna-style methods, and when model-based approaches outperform model-free ones.</p>
+    `,
+    lectures: [
+      { label: 'Lecture 11 — Model-Based RL', file: 'lectures/lecture11.html' }
+    ],
+    readings: []
+  },
+  {
+    id: 'generalization',
+    num: '08',
+    title: 'Generalization in RL',
+    subtitle: 'Multi-task learning, meta-learning, and exploration',
+    description: `
+      <p>Moving beyond single-task RL to agents that generalize across tasks. Covers multi-task and goal-conditioned RL, meta-reinforcement learning (learning to learn), and principled exploration strategies that go beyond epsilon-greedy.</p>
+    `,
+    lectures: [
+      { label: 'Lecture 12 — Multi-Task & Goal-Conditioned RL', file: 'lectures/lecture12.html' },
+      { label: 'Lecture 13 — Meta-RL', file: 'lectures/lecture13.html' },
+      { label: 'Lecture 14 — Exploration', file: 'lectures/lecture14.html' }
+    ],
+    readings: []
+  },
+  {
+    id: 'hierarchical-robotics',
+    num: '09',
+    title: 'Hierarchical RL & Robotics',
+    subtitle: 'Temporal abstraction and autonomous robot learning',
+    description: `
+      <p>Scaling RL to long-horizon tasks through temporal abstraction and hierarchical decomposition. Covers options, goal-conditioned hierarchies, and practical approaches to autonomous robot learning in the real world.</p>
+    `,
+    lectures: [
+      { label: 'Lecture 15 — Hierarchical RL', file: 'lectures/lecture15.html' },
+      { label: 'Lecture 16 — Autonomous Learning', file: 'lectures/lecture16.html' }
+    ],
+    readings: []
+  },
+  {
+    id: 'sim-to-real-frontiers',
+    num: '10',
+    title: 'Sim-to-Real & Frontiers',
+    subtitle: 'Bridging simulation to reality and the future of RL research',
+    description: `
+      <p>The gap between simulated and real environments is one of the central challenges in deploying RL. Covers domain randomization, system identification, and transfer techniques. Concludes with a survey of open problems and future directions in deep RL research.</p>
+    `,
+    lectures: [
+      { label: 'Lecture 17 — Sim-to-Real (Guest: Ashish Kumar)', file: 'lectures/lecture17.html' },
+      { label: 'Lecture 18 — Frontiers', file: 'lectures/lecture18.html' }
+    ],
+    readings: []
+  }
+];
+
+const slideIcon = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>`;
+
+const arrowIcon = `<svg class="lecture-arrow" width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="5" y1="12" x2="19" y2="12"/><polyline points="12 5 19 12 12 19"/></svg>`;
+
+const bookIcon = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4 19.5A2.5 2.5 0 0 1 6.5 17H20"/><path d="M6.5 2H20v20H6.5A2.5 2.5 0 0 1 4 19.5v-15A2.5 2.5 0 0 1 6.5 2z"/></svg>`;
+
+const linkIcon = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>`;
+
+// Build sidebar nav
+const nav = document.getElementById('sidebarNav');
+modules.forEach(m => {
+  const section = document.createElement('div');
+  section.className = 'nav-section';
+  section.innerHTML = `
+    <a class="nav-item" href="#${m.id}" data-id="${m.id}">
+      <span class="nav-num">${m.num}</span>
+      <span>${m.title}</span>
+    </a>
+  `;
+  nav.appendChild(section);
+});
+
+// Build content
+const content = document.getElementById('content');
+modules.forEach(m => {
+  const lectureCards = m.lectures.map(l => `
+    <a class="lecture-card" href="${l.file}">
+      <div class="lecture-icon">${slideIcon}</div>
+      <div class="lecture-info">
+        <div class="lecture-label">${l.label}</div>
+        <div class="lecture-meta">Lecture notes</div>
+      </div>
+      ${arrowIcon}
+    </a>
+  `).join('');
+
+  const readingPills = m.readings && m.readings.length ? `
+    <div class="readings">
+      <h4>Readings</h4>
+      <div class="reading-pills">
+        ${m.readings.map(r => {
+          if (r.type === 'link') {
+            return `<a class="reading-pill is-link" href="${r.url}" target="_blank" rel="noopener">${linkIcon} ${r.text}</a>`;
+          }
+          return `<span class="reading-pill">${bookIcon} ${r.text}</span>`;
+        }).join('')}
+      </div>
+    </div>
+  ` : '';
+
+  const prereqsHTML = m.prereqs ? `
+    <div class="prereqs">
+      <h4>Prerequisites &amp; Setup</h4>
+      <div class="prereqs-grid">
+        ${m.prereqs.map(p => `
+          <a class="prereq-card" href="${p.url}" target="_blank" rel="noopener">
+            <span class="prereq-icon" style="font-family:var(--serif);font-size:18px;color:var(--accent)">${p.icon}</span>
+            <div>
+              <div class="prereq-label">${p.label}</div>
+              <div class="prereq-sub">${p.sub}</div>
+            </div>
+          </a>
+        `).join('')}
+      </div>
+    </div>
+  ` : '';
+
+  const moduleHTML = document.createElement('section');
+  moduleHTML.className = 'module';
+  moduleHTML.id = m.id;
+  moduleHTML.innerHTML = `
+    <div class="module-header">
+      <div class="module-number">${m.num}</div>
+      <div class="module-title-block">
+        <div class="module-title">${m.title}</div>
+        <div class="module-subtitle">${m.subtitle}</div>
+      </div>
+    </div>
+    <div class="module-body">
+      <div>
+        <div class="module-description">${m.description}</div>
+        ${prereqsHTML}
+      </div>
+      <div>
+        <div class="lectures-panel">
+          <h4>Lectures</h4>
+          ${lectureCards}
+        </div>
+        ${readingPills}
+      </div>
+    </div>
+  `;
+  content.appendChild(moduleHTML);
+});
+
+// Active nav tracking
+const navItems = document.querySelectorAll('.nav-item');
+const sections = document.querySelectorAll('.module');
+
+function updateActiveNav() {
+  let current = '';
+  sections.forEach(s => {
+    const top = s.getBoundingClientRect().top;
+    if (top < 200) current = s.id;
+  });
+  navItems.forEach(item => {
+    item.classList.toggle('active', item.dataset.id === current);
+  });
+}
+
+// Scroll progress
+function updateProgress() {
+  const scrolled = window.scrollY;
+  const total = document.documentElement.scrollHeight - window.innerHeight;
+  const pct = total > 0 ? (scrolled / total) * 100 : 0;
+  document.querySelector('.progress-bar .bar').style.width = pct + '%';
+}
+
+window.addEventListener('scroll', () => {
+  updateActiveNav();
+  updateProgress();
+}, { passive: true });
+
+updateActiveNav();
+
+// Mobile sidebar
+function toggleSidebar() {
+  document.querySelector('.sidebar').classList.toggle('open');
+  document.querySelector('.menu-overlay').classList.toggle('open');
+}
+
+// Close mobile sidebar on nav click
+navItems.forEach(item => {
+  item.addEventListener('click', () => {
+    if (window.innerWidth <= 768) toggleSidebar();
+  });
+});
+</script>
+</body>
+</html>
