@@ -46,14 +46,308 @@
       <span class="lecture-tag">Count-Based</span>
       <span class="lecture-tag">Intrinsic Motivation</span>
     </div>
-    <a class="lecture-pdf-link" href="../slides/cs224r_2025_lecture14.pdf" target="_blank">
+    <a class="lecture-pdf-link" href="../slides/14_cs224r_exploration_2025.pdf" target="_blank">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
       Original PDF slides
     </a>
   </div>
 
   <article class="lecture-article">
-    <!-- Content will be added in Phase 3 -->
+
+    <!-- Section 1: Why Is Exploration Hard? -->
+    <h2 id="why-exploration-hard">Why Is Exploration Hard?</h2>
+
+    <p>Consider two Atari games. In <strong>Breakout</strong>, a random policy will occasionally hit the ball, score points, and receive reward. The agent can bootstrap from this accidental success, gradually improving. In <strong>Montezuma's Revenge</strong>, the agent must navigate multiple rooms, pick up a key, avoid enemies, and open doors&mdash;all before receiving any reward at all. A random policy will essentially never stumble upon the required sequence of actions. The first game is easy for RL; the second remains one of the hardest benchmarks in the field.</p>
+
+    <p>The difference comes down to <strong>exploration</strong>: how the agent discovers high-reward strategies in a vast space of possible behaviors. When reward is dense and immediately available, even simple exploration strategies (like adding random noise) suffice. When reward is sparse and requires temporally extended sequences of precise actions, exploration becomes the bottleneck.</p>
+
+    <div class="callout example">
+      <div class="callout-label">Example</div>
+      <strong>The Card Game Mao.</strong> Mao is a card game where the rules are secret&mdash;the only rule you may be told is "the only rule you may be told is this one." You incur a penalty when you break a rule, and you can only discover rules through trial and error. Rules do not always make sense intuitively. This is exactly the predicament of an RL agent: it must discover the structure of the environment (the rules) through interaction, with only sparse penalty signals to guide it. Now imagine that your goal in life was to win 50 games of Mao, and you did not know this in advance. Temporally extended tasks become increasingly difficult based on (1) how long the task is and (2) how little you know about the rules.
+    </div>
+
+    <h3 id="exploration-exploitation-tradeoff">The Exploration-Exploitation Tradeoff</h3>
+
+    <p>The exploration problem can be stated in two complementary ways:</p>
+
+    <ul>
+      <li>How can an agent discover high-reward strategies that require a temporally extended sequence of complex behaviors that, individually, are not rewarding?</li>
+      <li>How can an agent decide whether to attempt new behaviors (to discover ones with higher reward) or continue to do the best thing it knows so far?</li>
+    </ul>
+
+    <p>These are two facets of the same fundamental tradeoff:</p>
+
+    <div class="callout definition">
+      <div class="callout-label">Definition</div>
+      <strong>Exploration vs. Exploitation.</strong>
+      <ul>
+        <li><strong>Exploitation:</strong> Choosing the action that yields the highest expected reward according to the agent's current knowledge.</li>
+        <li><strong>Exploration:</strong> Choosing actions the agent has not tried before (or has tried infrequently), in the hope of discovering strategies with even higher reward.</li>
+      </ul>
+    </div>
+
+    <p>This tradeoff appears everywhere in decision making. In restaurant selection, exploitation means returning to your favorite restaurant, while exploration means trying a new one. In online advertising, exploitation means showing the most successful ad, while exploration means testing a different ad. In oil drilling, exploitation means drilling at the best known location, while exploration means drilling at a new one.</p>
+
+
+    <!-- Section 2: A Spectrum of Difficulty -->
+    <h2 id="spectrum-difficulty">A Spectrum of Difficulty</h2>
+
+    <p>Can we derive an <em>optimal</em> exploration strategy? The answer depends critically on the problem structure. Exploration problems fall along a spectrum of theoretical tractability:</p>
+
+    <ul>
+      <li><strong>Multi-armed bandits</strong> (one-step, stateless RL): Theoretically tractable. Optimal (up to constant factors) algorithms exist.</li>
+      <li><strong>Contextual bandits</strong> (one-step RL with state): Tractable with additional structure (e.g., linear realizability).</li>
+      <li><strong>Small, tabular MDPs:</strong> Tractable, with provably efficient algorithms that explore in polynomial time.</li>
+      <li><strong>Large MDPs with known low-rank features:</strong> Sometimes tractable, depending on the specific structure.</li>
+      <li><strong>Large MDPs without known structure:</strong> Generally intractable. No polynomial-time algorithm can guarantee efficient exploration in the worst case.</li>
+    </ul>
+
+    <p>Deep RL problems with high-dimensional state spaces (images, proprioception) fall into the last category. This explains why principled exploration remains such a difficult open problem in practice: we lack the theoretical structure needed to guarantee efficient exploration, and must rely on heuristics, demonstrations, or meta-learning.</p>
+
+
+    <!-- Section 3: Exploration in Multi-Armed Bandits -->
+    <h2 id="exploration-bandits">Exploration in Multi-Armed Bandits</h2>
+
+    <p>To build intuition for principled exploration, we begin with the simplest possible setting: the <strong>multi-armed bandit</strong>, a one-step RL problem with no state transitions. The agent chooses one of $K$ arms (actions) at each round and receives a stochastic reward. The goal is to maximize cumulative reward over $T$ rounds.</p>
+
+    <h3 id="regret">Measuring Optimality: Regret</h3>
+
+    <div class="callout definition">
+      <div class="callout-label">Definition</div>
+      <strong>Regret.</strong> The <strong>regret</strong> after $T$ rounds of a bandit algorithm is the difference between the reward the agent would have obtained by always playing the best arm and the reward it actually obtained:
+      $$\text{Reg}(T) = T \cdot \E[r(a^*)] - \sum_{t=1}^{T} \E[r(a_t)]$$
+      where $a^* = \arg\max_a \E[r(a)]$ is the optimal arm and $a_t$ is the action taken at round $t$. An algorithm with sublinear regret ($\text{Reg}(T) = o(T)$) is guaranteed to converge to the optimal arm.
+    </div>
+
+    <p>Regret captures the total cost of exploration: the difference between what the agent could have earned with perfect knowledge and what it actually earned while learning. Lower regret means the agent identified and exploited the best arm more quickly.</p>
+
+    <h3 id="ucb">Optimism in the Face of Uncertainty: UCB</h3>
+
+    <p>The <strong>Upper Confidence Bound (UCB)</strong> algorithm embodies a simple but powerful principle: <em>assume the unknown is good</em>. For each arm, UCB maintains an estimate of the mean reward and a confidence interval around that estimate. It then selects the arm with the highest <em>upper</em> confidence bound&mdash;optimistically assuming that poorly explored arms might be better than they appear.</p>
+
+    <div class="algorithm">
+      <div class="algorithm-title">UCB1 (Upper Confidence Bound)</div>
+      <ol>
+        <li>Initialize: Play each arm once. Set $N_a = 1$ and $\bar{r}_a = r_a$ for each arm $a$.</li>
+        <li>For $t = K+1, K+2, \ldots, T$:</li>
+        <li style="list-style: none; padding-left: 1.5em;">Select action:
+          $$a_t = \arg\max_a \left[\bar{r}_a + C\sqrt{\frac{\ln t}{N_a}}\right]$$
+          where $\bar{r}_a$ is the empirical mean reward of arm $a$, $N_a$ is the number of times arm $a$ has been pulled, and $C > 0$ is a constant.
+        </li>
+        <li style="list-style: none; padding-left: 1.5em;">Observe reward $r_t$. Update $N_{a_t} \leftarrow N_{a_t} + 1$ and $\bar{r}_{a_t}$.</li>
+      </ol>
+      <p>UCB1 achieves regret $O(\sqrt{KT \ln T})$, which is optimal up to logarithmic factors.</p>
+    </div>
+
+    <p>The confidence bonus $C\sqrt{\ln t / N_a}$ decreases as an arm is pulled more often (larger $N_a$) and increases as total time grows (larger $t$). Arms that have been explored less receive a larger bonus, encouraging the algorithm to try them. As the algorithm collects more data, the confidence intervals shrink, and it increasingly exploits the best arm.</p>
+
+    <div class="callout insight">
+      <div class="callout-label">Key Insight</div>
+      UCB's optimism principle provides a natural resolution to the exploration-exploitation dilemma: by assuming that uncertain options are as good as they plausibly could be, the algorithm automatically explores under-sampled arms while gravitating toward the best arm as uncertainty is resolved. This "optimism in the face of uncertainty" principle extends to more complex settings, including MDPs, where it underlies algorithms like UCB-VI.
+    </div>
+
+    <h3 id="posterior-sampling">Probability Matching: Posterior Sampling</h3>
+
+    <p>An alternative to optimism is <strong>posterior sampling</strong> (also called <strong>Thompson sampling</strong>), which uses a Bayesian approach. The agent maintains a posterior distribution over the reward parameters of each arm and acts by sampling from this posterior.</p>
+
+    <div class="algorithm">
+      <div class="algorithm-title">Thompson Sampling for Bandits</div>
+      <ol>
+        <li>Assume a model for each arm's reward: $r(a_i) \sim p_{\psi_i}(r)$ for each arm $a_i$.</li>
+        <li>Maintain a posterior belief $\hat{p}(\psi_1, \ldots, \psi_K)$ over the reward parameters, initialized with a prior.</li>
+        <li>For each round $t = 1, 2, \ldots, T$:</li>
+        <li style="list-style: none; padding-left: 1.5em;">
+          (a) Sample reward parameters $\psi_1, \ldots, \psi_K \sim \hat{p}(\cdot)$ from the current posterior.<br>
+          (b) Take the optimal action assuming the sampled parameters are correct: $a_t = \arg\max_a \E_{p_{\psi_a}}[r]$.<br>
+          (c) Observe reward $r_t$ and update the posterior $\hat{p}$ using Bayes' rule.
+        </li>
+      </ol>
+      <p>Thompson sampling achieves Bayes-optimal regret and is competitive with UCB in practice. For Bernoulli bandits with a Beta prior, the posterior update is analytically tractable.</p>
+    </div>
+
+    <p>The intuition behind Thompson sampling is elegant: by sampling from the posterior, the algorithm naturally explores arms about which it is uncertain (since there is variance in the sampled parameters) while exploiting arms it believes are good (since the posterior concentrates around the true value). As more data is collected, the posterior sharpens, and the sampled parameters increasingly agree with reality, leading to exploitation.</p>
+
+    <div class="callout insight">
+      <div class="callout-label">Key Insight</div>
+      UCB and Thompson sampling represent two complementary philosophies for principled exploration: <em>optimism</em> (assume the unknown is good) versus <em>probability matching</em> (act according to your beliefs). Both achieve near-optimal regret bounds for bandits. Thompson sampling is often easier to implement and tends to perform better empirically, while UCB provides tighter worst-case guarantees. Both methods are widely deployed in industry for recommender systems and ad placement.
+    </div>
+
+
+    <!-- Section 4: Exploration in Large MDPs -->
+    <h2 id="exploration-large-mdps">Exploration in Large MDPs</h2>
+
+    <p>The elegant theory of bandit exploration does not easily translate to the large MDPs that arise in deep RL. In an MDP, the agent's actions affect not only the immediate reward but also the future state, creating long-range dependencies that bandits do not have. The state space may be continuous and high-dimensional (e.g., images), making count-based methods inapplicable in their basic form.</p>
+
+    <p>There has been substantial research on extending principled exploration to large MDPs&mdash;count-based exploration with density models, curiosity-driven exploration via prediction error, and random network distillation, among others. However, a sobering practical reality emerges:</p>
+
+    <div class="callout insight">
+      <div class="callout-label">Key Insight</div>
+      At the end of the day, exploration from scratch in large MDPs is intractable in the worst case. The most successful practical approaches for complex tasks sidestep the pure exploration problem entirely by relying on: (1) <strong>demonstrations</strong> or base models pretrained on demonstrations, which provide a warm start in the policy space, and (2) <strong>shaped rewards</strong> wherever feasible, such as hand-coded reward shaping in simulation for legged robots or single-step rewards from human preferences for language models.
+    </div>
+
+    <p>This pragmatic observation motivates the second half of this lecture: can we use <strong>meta-learning</strong> to learn effective exploration strategies from a distribution of tasks, rather than designing them by hand?</p>
+
+
+    <!-- Section 5: Learning to Explore via Meta-Learning -->
+    <h2 id="learning-to-explore">Learning to Explore via Meta-Learning</h2>
+
+    <p>In Lecture 13, we introduced meta-RL and identified the central challenge: the agent must explore effectively at test time to identify the task and then execute well. We now examine this exploration challenge in depth and present a solution that elegantly decouples the learning of exploration from the learning of execution.</p>
+
+    <h3 id="when-test-time-exploration">When Do We Need Test-Time Exploration?</h3>
+
+    <p>Test-time exploration is essential in settings with <strong>partial observability</strong>&mdash;where the agent cannot determine the task from a single observation:</p>
+
+    <ul>
+      <li><strong>Physical environments:</strong> A robot in a new kitchen must open cabinets to find ingredients. The task (what to cook) is partially observable until the robot actively explores.</li>
+      <li><strong>LLM reasoning:</strong> A language model solving a complex problem must explore different reasoning strategies to identify which approach works. The "task" (which solution strategy is correct) is not immediately apparent.</li>
+      <li><strong>Game playing:</strong> Facing a new opponent, the agent must probe the opponent's strategy through trial interactions before it can respond optimally.</li>
+    </ul>
+
+    <h3 id="chicken-egg-revisited">The Chicken-and-Egg Problem Revisited</h3>
+
+    <p>As discussed in Lecture 13, end-to-end meta-RL methods face a coupling problem. Learning exploration and execution depend on each other, which can lead to poor local optima and poor sample efficiency. To make this concrete, consider the following scenario:</p>
+
+    <p>A meta-RL agent is learning to cook in different kitchens. The exploration phase involves finding ingredients, and the execution phase involves cooking the recipe. If the agent never learns to find the right ingredients (bad exploration), it cannot learn to cook (bad execution). If it cannot cook, it receives low reward regardless of how well it explores, providing no gradient signal to improve exploration. This coupling traps the optimization.</p>
+
+
+    <!-- Section 6: The DREAM Algorithm -->
+    <h2 id="dream-algorithm">DREAM: Decoupled Exploration and Execution</h2>
+
+    <p>The <strong>DREAM</strong> algorithm (Decoupled Reward-free Exploration and Execution in Meta-Reinforcement Learning; Liu, Raghunathan, Liang, Finn, ICML 2021) provides an elegant solution to the chicken-and-egg problem. The core idea is to separate meta-training into two independent optimization problems.</p>
+
+    <div class="callout definition">
+      <div class="callout-label">Definition</div>
+      <strong>DREAM: Decoupled Exploration and Execution.</strong> DREAM separates meta-training into two phases:
+      <ul>
+        <li><strong>Phase 1 &mdash; Learn execution and identify key information:</strong> Given the task identifier $\mu_i$ (available during meta-training), learn a bottlenecked representation $z_i = F(\mu_i)$ and an execution policy $\pi^{\text{exec}}(a \mid s, z_i)$. The bottleneck ensures that $z_i$ captures only task-relevant information.</li>
+        <li><strong>Phase 2 &mdash; Learn to explore:</strong> Train an exploration policy $\pi^{\text{exp}}$ to collect data $\mathcal{D}_{\text{tr}}$ such that $z_i$ can be accurately recovered from $\mathcal{D}_{\text{tr}}$ alone.</li>
+      </ul>
+      At meta-test time: (1) explore using $\pi^{\text{exp}}$ to collect $\mathcal{D}_{\text{tr}}$, (2) infer $\hat{z} \sim q(z \mid \mathcal{D}_{\text{tr}})$, and (3) execute using $\pi^{\text{exec}}(a \mid s, \hat{z})$.
+    </div>
+
+    <p>The decoupling is the key design choice. Phase 1 determines <em>what</em> information the agent needs (the bottlenecked representation $z_i$), while Phase 2 determines <em>how</em> to gather that information (the exploration policy). Because these are separate optimization problems, neither depends on the other being already solved. This breaks the chicken-and-egg cycle.</p>
+
+    <h3 id="information-bottleneck">The Variational Information Bottleneck</h3>
+
+    <p>A critical component of DREAM is the <strong>information bottleneck</strong> that ensures the representation $z_i$ captures only task-relevant information. Without this bottleneck, the representation might encode irrelevant details (wall colors, decorations) that are easy to observe but useless for task execution. The exploration policy would then waste effort gathering this irrelevant information.</p>
+
+    <p>The bottleneck is implemented using a <strong>variational information bottleneck (VIB)</strong>. The idea is to add Gaussian noise to the representation and prevent the encoder from circumventing the noise by increasing the representation magnitude:</p>
+
+    <ol>
+      <li>The encoder produces $z_i = F(\mu_i)$.</li>
+      <li>During training, add Gaussian noise: $\bar{z}_i = z_i + \epsilon$, where $\epsilon \sim \mathcal{N}(0, I)$.</li>
+      <li>Regularize the representation magnitude via a KL penalty: $\mathcal{L}_{\text{VIB}} = \mathcal{L}_{\text{task}} + \beta \|z_i\|^2$.</li>
+    </ol>
+
+    <p>This is equivalent to minimizing $D_{\text{KL}}(F(z \mid \mu_i) \| \mathcal{N}(0, I))$, forcing the representation to be compact and informative. The noise destroys any information not strongly encoded in the representation, while the $\ell_2$ penalty prevents the encoder from simply scaling up the signal to overwhelm the noise.</p>
+
+    <div class="callout insight">
+      <div class="callout-label">Key Insight</div>
+      The information bottleneck serves a dual purpose: it ensures the execution policy relies only on genuinely task-relevant features, and it defines a clear target for the exploration policy&mdash;recover a compact, low-dimensional representation. Without the bottleneck, the exploration policy would face the impossible task of reconstructing the full task identifier, which might include vast amounts of irrelevant detail.
+    </div>
+
+    <h3 id="exploration-reward">The Exploration Reward</h3>
+
+    <p>How should we train the exploration policy $\pi^{\text{exp}}$ to collect informative data? DREAM uses an <strong>information gain</strong> reward: the per-step increase in the exploration policy's ability to predict $z_i$.</p>
+
+    <p>Specifically, DREAM trains a task inference model $q(z_i \mid \mathcal{D}_{\text{tr}})$ and defines the exploration reward as:</p>
+
+    $$r_t^{\text{exp}} = \underbrace{\ell(q(z_i \mid \tau_{1:t-1}))}_{\text{prediction error from past data}} - \underbrace{\ell(q(z_i \mid \tau_{1:t}))}_{\text{prediction error after new observation}}$$
+
+    <p>where $\ell$ is a prediction loss (e.g., mean squared error in predicting $z_i$). This reward is positive when the new observation at time $t$ reduces uncertainty about the task representation, encouraging the agent to seek informative interactions.</p>
+
+
+    <!-- Section 7: Theoretical Analysis of DREAM -->
+    <h2 id="theoretical-analysis">Theoretical Analysis</h2>
+
+    <p>DREAM's decoupled objective enjoys theoretical properties that end-to-end meta-RL methods lack.</p>
+
+    <div class="callout theorem">
+      <div class="callout-label">Theorem</div>
+      <strong>Consistency of DREAM (Informal).</strong> Under mild assumptions, the DREAM objective is consistent with end-to-end optimization: the optimal solution to the decoupled problem coincides with the optimal solution to the end-to-end meta-RL objective. That is, DREAM does not sacrifice optimality through decoupling&mdash;it can in principle recover the optimal exploration strategy.
+    </div>
+
+    <p>Furthermore, in a simplified bandit-like analysis with $|A|$ arms, the sample complexity comparison between end-to-end meta-RL and DREAM is striking:</p>
+
+    <ul>
+      <li><strong>RL$^2$ (end-to-end):</strong> Requires $O(|A|^2 \log |A|)$ meta-training samples to learn optimal exploration.</li>
+      <li><strong>DREAM (decoupled):</strong> Requires $O(|A| \log |A|)$ meta-training samples&mdash;a factor-of-$|A|$ improvement.</li>
+    </ul>
+
+    <p>This quadratic-to-linear improvement arises because DREAM does not need to simultaneously learn what information is relevant and how to gather it. By separating these two problems, each becomes individually easier.</p>
+
+
+    <!-- Section 8: Empirical Results -->
+    <h2 id="empirical-results">Empirical Results</h2>
+
+    <p>DREAM was evaluated on a challenging sparse-reward 3D visual navigation problem. The agent must navigate a 3D environment using pixel observations (80 x 60 RGB images), read a sign indicating the target object (key, block, or ball of a specific color), and then navigate to the correct object. The reward is sparse and binary: $+1$ if the correct object is reached, $0$ otherwise.</p>
+
+    <h3 id="qualitative-behavior">Qualitative Behavior</h3>
+
+    <p>The exploration and execution behaviors learned by DREAM are intuitive. During the exploration episode, the agent walks around the barrier to read the sign, identifying the task. During the execution episode, it proceeds directly to the correct object based on the information gathered during exploration. This demonstrates that DREAM learns a semantically meaningful exploration strategy: it identifies what information is needed (the sign content) and executes a targeted plan to acquire that information.</p>
+
+    <h3 id="quantitative-comparison">Quantitative Comparison</h3>
+
+    <p>Compared against several baselines:</p>
+
+    <ul>
+      <li><strong>End-to-end methods (RL$^2$, IMPORT, VariBAD):</strong> Perform poorly due to the exploration-execution coupling problem. They struggle to learn meaningful exploration strategies in the sparse-reward setting.</li>
+      <li><strong>PEARL with Thompson sampling:</strong> An upper-bound variant (PEARL-UB) using the optimal policy with Thompson sampling exploration does not learn the optimal exploration strategy&mdash;it cannot discover that reading the sign is the most efficient way to identify the task.</li>
+      <li><strong>DREAM:</strong> Achieves near-optimal reward, successfully learning both what to explore (the sign) and how to execute (navigate to the target).</li>
+    </ul>
+
+    <div class="callout example">
+      <div class="callout-label">Example</div>
+      <strong>Comparison Summary.</strong> On the 3D visual navigation task, DREAM achieves near-optimal success rate, while end-to-end methods (RL$^2$, IMPORT, VariBAD) fail to learn meaningful exploration and PEARL's Thompson sampling exploration is suboptimal because it does not learn that reading the sign is the most information-efficient exploration action.
+    </div>
+
+
+    <!-- Section 9: Application: Meta-Exploration for CS Education -->
+    <h2 id="cs-education">Application: Meta-Exploration for CS Education</h2>
+
+    <p>An unexpected application of meta-exploration comes from computer science education. The task of grading and providing feedback on student programming assignments can be framed as a meta-RL problem where each student's program is a different "task."</p>
+
+    <h3 id="student-programs">Finding Bugs and Providing Feedback</h3>
+
+    <p>Consider a programming assignment where students write code for a simple game (e.g., the Bounce assignment on Code.org, or the Breakout assignment in Stanford's CS106A). Each student's program may contain different bugs. The meta-RL agent must:</p>
+
+    <ol>
+      <li><strong>Explore:</strong> Interact with the student's program by providing inputs and observing outputs to identify the specific bugs present.</li>
+      <li><strong>Execute:</strong> Generate an accurate assessment of the program's correctness based on the observed behavior.</li>
+    </ol>
+
+    <p>The meta-exploration framework applies directly. During meta-training, the agent learns an exploration strategy that efficiently tests different aspects of a program (what happens when the ball hits the goal? the floor? the wall?). At meta-test time, it applies this learned strategy to a new student's program and uses the gathered information to assign grades or provide targeted feedback.</p>
+
+    <h3 id="ai-assisted-grading">AI-Assisted Grading</h3>
+
+    <p>Liu et al. (SIGCSE 2024) deployed this approach in Stanford's CS106A course for the Breakout programming assignment. An autograder pre-populates a rubric and shows videos of the learned test inputs applied to each student's program. In a controlled study with Stanford TAs:</p>
+
+    <ul>
+      <li>AI-assisted grading was <strong>44% faster</strong> than manual grading.</li>
+      <li>AI-assisted grading was <strong>6% more accurate</strong> than manual grading.</li>
+      <li>TAs reported positive experiences using the system.</li>
+    </ul>
+
+    <p>This application illustrates the breadth of meta-exploration: the same framework that learns to explore mazes or identify object properties can learn to systematically test software, with practical impact on education at scale.</p>
+
+
+    <!-- Section 10: Looking Ahead -->
+    <h2 id="looking-ahead">Looking Ahead</h2>
+
+    <p>This lecture covered the exploration problem from first principles to frontier research. We began with the fundamental exploration-exploitation tradeoff, studied principled bandit algorithms (UCB and Thompson sampling), and confronted the intractability of exploration in large MDPs. We then showed how meta-learning can learn exploration strategies, with DREAM providing an elegant decoupled approach that avoids the chicken-and-egg problem.</p>
+
+    <p>Key takeaways:</p>
+
+    <ul>
+      <li>Exploration is the bottleneck in sparse-reward RL: without it, the agent never discovers high-reward strategies.</li>
+      <li>In bandits, UCB (optimism) and Thompson sampling (probability matching) provide near-optimal exploration with theoretical guarantees.</li>
+      <li>In large MDPs, exploration from scratch is generally intractable; practical approaches rely on demonstrations, shaped rewards, or meta-learning.</li>
+      <li>DREAM decouples exploration and execution learning via an information bottleneck, achieving near-optimal meta-exploration with better sample complexity than end-to-end methods.</li>
+      <li>Meta-exploration has surprising applications beyond robotics, including automated assessment of student programs.</li>
+    </ul>
+
+    <p>In the next lecture, we turn to <strong>hierarchical RL</strong>, which addresses a related challenge: can we decompose long-horizon tasks into a hierarchy of subtasks, enabling the agent to plan and explore at multiple levels of temporal abstraction?</p>
+
   </article>
 
   <nav class="lecture-nav">

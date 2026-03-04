@@ -46,14 +46,412 @@
       <span class="lecture-tag">Dyna</span>
       <span class="lecture-tag">Learned Dynamics</span>
     </div>
-    <a class="lecture-pdf-link" href="../slides/cs224r_2025_lecture11.pdf" target="_blank">
+    <a class="lecture-pdf-link" href="../slides/11_cs224r_mbrl_2025.pdf" target="_blank">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
       Original PDF slides
     </a>
   </div>
 
   <article class="lecture-article">
-    <!-- Content will be added in Phase 3 -->
+
+    <!-- Section 1: Why Model-Based RL? -->
+    <h2 id="why-model-based-rl">Why Model-Based RL?</h2>
+
+    <p>Throughout this course, we have studied a rich landscape of reinforcement learning algorithms&mdash;from imitation learning and offline RL to on-policy and off-policy methods like SAC, DQN, and PPO. All of the RL methods we have seen so far are <strong>model-free</strong>: they learn a policy or value function directly from interaction data without ever attempting to understand <em>how the environment works</em>. Model-based reinforcement learning takes a fundamentally different approach by asking: can we learn a predictive model of the environment&mdash;a "learned simulator"&mdash;and then use it to make better decisions?</p>
+
+    <p>The central motivation is <strong>sample efficiency</strong>. Model-free methods, particularly on-policy algorithms like REINFORCE, require enormous amounts of environment interaction. In domains like robotics, where every real-world sample involves physical wear on hardware, or in medicine, where each sample corresponds to a patient outcome, this data hunger is a critical bottleneck. If we can learn an accurate dynamics model from a small amount of data, we can simulate many trajectories internally and dramatically reduce the number of real-world interactions needed.</p>
+
+    <div class="callout definition">
+      <div class="callout-label">Definition</div>
+      <strong>Model-Based Reinforcement Learning.</strong> A family of RL methods that explicitly learn a <em>dynamics model</em> $\hat{f}(\mathbf{s}, \mathbf{a}) \approx \mathbf{s}'$ (or more generally, $p_\theta(\mathbf{s}_{t+1} \mid \mathbf{s}_t, \mathbf{a}_t)$) of the environment and use it to improve decision-making, either through planning, synthetic data generation, or both.
+    </div>
+
+    <p>The idea of learning a simulator is broadly applicable. In <strong>robotics and physical systems</strong>, the model captures the physics of the system&mdash;predicting how joint angles, object positions, and contact forces evolve over time. In <strong>finance</strong>, a model might predict market dynamics conditioned on trading actions. In <strong>games</strong>, the model encodes the rules of the game (though in some games like chess, the rules are already known and need not be learned). Modern video generation models like Sora and Veo 2 can even be viewed as learned simulators that predict future visual observations conditioned on actions.</p>
+
+    <div class="callout insight">
+      <div class="callout-label">Key Insight</div>
+      Not all domains require learning a model. In games like chess or Go, the transition dynamics are perfectly known (the rules of the game). In such cases, model-based methods can use the known model directly for planning (as in AlphaZero's Monte Carlo Tree Search) without needing to learn anything about the dynamics. The need to <em>learn</em> a model arises when the dynamics are unknown or too complex to specify analytically.
+    </div>
+
+    <!-- Section 2: The Learned Simulator Algorithm -->
+    <h2 id="learned-simulator">The Learned Simulator Algorithm</h2>
+
+    <p>The most basic model-based RL approach follows a conceptually simple three-step recipe. We collect transition data from the environment, fit a neural network to predict next states, and then use this learned model as a stand-in for the real environment.</p>
+
+    <div class="algorithm">
+      <div class="algorithm-title">Notional Learned Simulator Algorithm</div>
+      <ol>
+        <li><strong>Collect data.</strong> Run some base policy $\pi_0(\mathbf{a} \mid \mathbf{s})$ (e.g., a random policy) to collect a dataset $\mathcal{D} = \{(\mathbf{s}_i, \mathbf{a}_i, \mathbf{s}'_i)\}$.</li>
+        <li><strong>Learn a "simulator."</strong> Train a model $f_\phi(\mathbf{s}, \mathbf{a})$ to predict the next state by minimizing the mean squared error:
+          $$\min_\phi \sum_i \|f_\phi(\mathbf{s}_i, \mathbf{a}_i) - \mathbf{s}'_i\|^2$$
+        </li>
+        <li><strong>Optimize inside the learned simulator.</strong> Run your favorite RL algorithm or planning method using $f_\phi$ as the environment dynamics.</li>
+      </ol>
+    </div>
+
+    <p>This algorithm is appealingly simple, but several critical challenges arise in practice. Understanding these challenges is essential for making model-based RL work reliably.</p>
+
+    <h3 id="challenges">Key Challenges</h3>
+
+    <p>Three fundamental issues can cause this naive approach to fail:</p>
+
+    <ul>
+      <li><strong>Data coverage matters enormously.</strong> The model is only accurate in regions of state-action space covered by the training data $\mathcal{D}$. If the base policy $\pi_0$ only visits a small part of the state space, the model will make poor predictions elsewhere&mdash;and the RL algorithm may exploit these inaccuracies. This is analogous to the distribution mismatch problem in imitation learning (DAgger).</li>
+      <li><strong>Modeling difficulty is domain-dependent.</strong> Some environments have simple, low-dimensional dynamics that are easy to learn (e.g., a pendulum). Others involve complex contact physics, deformable objects, or high-dimensional observations (e.g., images), making accurate modeling far more challenging. A maze with discrete transitions is trivial to model; a humanoid robot performing dexterous manipulation is not.</li>
+      <li><strong>Model inaccuracies compound.</strong> Even with a good model, running RL <em>inside</em> the learned simulator is nontrivial. Small per-step prediction errors can compound over long rollouts, causing the simulated trajectories to diverge from reality. An RL agent trained purely in a slightly inaccurate simulator may learn to exploit model errors rather than solve the real task.</li>
+    </ul>
+
+    <div class="callout example">
+      <div class="callout-label">Example</div>
+      <strong>The cliff analogy.</strong> Imagine a drone navigating along a cliff edge. A base policy (e.g., random exploration) might only generate trajectories in a safe area away from the cliff. The learned model has no data about what happens near the edge, so it might predict that going right (toward the cliff) leads to gentle, safe terrain. An RL agent optimizing in this model might confidently plan a trajectory right off the cliff. The data distribution of $\pi_0$ does not match the distribution induced by the final policy $\pi_f$: $p_{\pi_0}(\mathbf{s}) \neq p_{\pi_f}(\mathbf{s})$.
+    </div>
+
+    <!-- Section 3: Learning Dynamics Models -->
+    <h2 id="learning-dynamics-models">Learning Dynamics Models</h2>
+
+    <p>Before discussing how to <em>use</em> a learned model, we briefly survey the spectrum of approaches for obtaining one. The right approach depends heavily on how much prior knowledge is available about the domain.</p>
+
+    <h3 id="known-dynamics">Known Dynamics</h3>
+
+    <p>In some domains, the dynamics are fully specified. Board games like chess and Go have exact, deterministic rules. Certain card games and combinatorial optimization problems also fall into this category. When the model is known, we can skip the learning step entirely and proceed directly to planning.</p>
+
+    <h3 id="partially-known-dynamics">Partially Known Dynamics</h3>
+
+    <p>In many physical systems, we know the general form of the dynamics (e.g., Newton's laws, rigid-body mechanics) but not all the parameters (e.g., friction coefficients, mass distributions, damping constants). In these cases, we can use the known structure and <strong>fit the unknown parameters</strong> from data. This approach, sometimes called <em>system identification</em>, is common in classical control and robotics. It typically requires far less data than learning dynamics from scratch because the model class is constrained to physically plausible dynamics.</p>
+
+    <h3 id="unknown-dynamics">Unknown Dynamics: End-to-End Learning</h3>
+
+    <p>In the most general&mdash;and most common&mdash;setting, we have no prior knowledge of the dynamics and must learn the model entirely from data. Two main strategies exist:</p>
+
+    <ul>
+      <li><strong>End-to-end learning in observation space.</strong> Directly learn a mapping $f_\phi: \mathcal{S} \times \mathcal{A} \to \mathcal{S}$ from the current state and action to the next state. When states are low-dimensional vectors (e.g., joint angles and velocities), a standard neural network with mean squared error loss works well. When observations are high-dimensional (e.g., images), one might use convolutional architectures or even video prediction models.</li>
+      <li><strong>Latent-space models.</strong> Learn a compact, low-dimensional state representation $\mathbf{z} = g(\mathbf{s})$, then learn the dynamics in this latent space: $\hat{\mathbf{z}}_{t+1} = h(\mathbf{z}_t, \mathbf{a}_t)$. This approach can be more data-efficient and avoids the need to predict every pixel of a high-dimensional observation. World models (discussed briefly later) follow this paradigm.</li>
+    </ul>
+
+    <div class="callout insight">
+      <div class="callout-label">Key Insight</div>
+      In addition to learning the dynamics, model-based RL often requires learning a <strong>reward model</strong> as well. If the reward function is not known analytically (which is common when rewards depend on complex sensory inputs), the agent must learn to predict rewards from $(s, a)$ pairs alongside learning the transition dynamics.
+    </div>
+
+    <!-- Section 4: Planning with Learned Models -->
+    <h2 id="planning-with-learned-models">Planning with Learned Models</h2>
+
+    <p>Once we have a learned dynamics model $f_\phi(\mathbf{s}, \mathbf{a})$, the most direct way to use it is for <strong>planning</strong>&mdash;searching over action sequences to find ones that maximize cumulative reward over a finite horizon $H$. The planning problem can be stated as:</p>
+
+    $$\max_{\mathbf{a}_{t:t+H}} \sum_{t'=t}^{t+H} r(\mathbf{s}_{t'}, \mathbf{a}_{t'})$$
+
+    <p>where each next state is obtained from the model: $\mathbf{s}_{t'+1} = f_\phi(\mathbf{s}_{t'}, \mathbf{a}_{t'})$. This optimization can be performed using either gradient-based or sampling-based methods.</p>
+
+    <h3 id="gradient-based-planning">Approach 1a: Gradient-Based Planning (Backpropagation)</h3>
+
+    <p>If the learned model $f_\phi$ is a differentiable neural network and the reward function $r$ is also differentiable, we can <strong>backpropagate through the model</strong> to optimize the action sequence. Concretely, we treat the actions $\mathbf{a}_t, \mathbf{a}_{t+1}, \ldots, \mathbf{a}_{t+H-1}$ as free parameters, compute the total reward by unrolling the model forward, and then take gradient ascent steps on the actions:</p>
+
+    $$\nabla_{\mathbf{a}_{t:t+H}} \sum_{t'=t}^{t+H} r\bigl(f_\phi(\mathbf{s}_{t'}, \mathbf{a}_{t'}),\; \mathbf{a}_{t'}\bigr)$$
+
+    <div class="algorithm">
+      <div class="algorithm-title">Planning via Backpropagation</div>
+      <ol>
+        <li>Run some policy (e.g., random) to collect data $\mathcal{D} = \{(\mathbf{s}, \mathbf{a}, \mathbf{s}')_i\}$.</li>
+        <li>Learn model $f_\phi(\mathbf{s}, \mathbf{a})$ to minimize $\sum_i \|f_\phi(\mathbf{s}_i, \mathbf{a}_i) - \mathbf{s}'_i\|^2$.</li>
+        <li>Backpropagate through $f_\phi(\mathbf{s}, \mathbf{a})$ to optimize the action sequence via gradient ascent on cumulative reward.</li>
+      </ol>
+    </div>
+
+    <p>Gradient-based planning is <strong>scalable to high-dimensional action spaces</strong> and works especially well in overparameterized regimes where the optimization landscape is smooth. However, it requires a differentiable model and reward, and it can struggle with rugged loss landscapes containing many local optima.</p>
+
+    <h3 id="sampling-based-planning">Approach 1b: Sampling-Based Planning</h3>
+
+    <p>An alternative is to use <strong>sampling-based (zeroth-order) optimization</strong>, which requires no gradient information. These methods evaluate the objective for many candidate action sequences and iteratively refine the search distribution.</p>
+
+    <h3 id="random-shooting">Random Shooting</h3>
+
+    <p>The simplest sampling-based method is <em>random shooting</em>. Denote an action sequence as $\mathbf{A} := \mathbf{a}_t, \ldots, \mathbf{a}_{t+H}$.</p>
+
+    <ol>
+      <li>Sample many candidate sequences $\mathbf{A}_1, \ldots, \mathbf{A}_N$ from some distribution (e.g., uniform over the action space).</li>
+      <li>For each candidate, roll out the model to compute $J(\mathbf{A}_i) = \sum_{t'=t}^{t+H} r(\mathbf{s}_{t'}, \mathbf{a}_{t'})$.</li>
+      <li>Return $\mathbf{A}_i$ with the highest $J(\mathbf{A}_i)$.</li>
+    </ol>
+
+    <p>Random shooting is extremely simple, but the quality of the solution depends entirely on the coverage of the random samples. In high-dimensional action spaces or long horizons, the probability of sampling a good sequence by chance becomes vanishingly small. Can we do better by iteratively improving the sampling distribution?</p>
+
+    <h3 id="cross-entropy-method">The Cross-Entropy Method (CEM)</h3>
+
+    <p>The <strong>cross-entropy method</strong> (not to be confused with the cross-entropy loss in classification) is an iterative refinement of random shooting that progressively concentrates the sampling distribution around high-performing action sequences.</p>
+
+    <div class="algorithm">
+      <div class="algorithm-title">Cross-Entropy Method (CEM) for Action Optimization</div>
+      <p>Initialize a sampling distribution $p(\mathbf{A})$ (e.g., Gaussian with broad variance). Repeat:</p>
+      <ol>
+        <li><strong>Sample</strong> many action sequences $\mathbf{A}_1, \ldots, \mathbf{A}_N$ from $p(\mathbf{A})$.</li>
+        <li><strong>Evaluate</strong> each: $J(\mathbf{A}_i) = \sum_{t'=t}^{t+H} r(\mathbf{s}_{t'}, \mathbf{a}_{t'})$.</li>
+        <li><strong>Select elites:</strong> pick the top-$M$ sequences $\mathbf{A}_{i_1}, \ldots, \mathbf{A}_{i_M}$ with the largest $J(\mathbf{A}_i)$, where $M < N$.</li>
+        <li><strong>Refit</strong> the distribution $p(\mathbf{A})$ to the elites (e.g., fit a Gaussian to $\mathbf{A}_{i_1}, \ldots, \mathbf{A}_{i_M}$).</li>
+      </ol>
+      <p>After several iterations, return the best action sequence found.</p>
+    </div>
+
+    <h3 id="gradient-vs-sampling">Gradient-Based vs. Sampling-Based: Trade-offs</h3>
+
+    <p>These two families of optimization methods have complementary strengths:</p>
+
+    <table>
+      <thead>
+        <tr><th></th><th>Gradient-Based (1st order)</th><th>Sampling-Based (0th order)</th></tr>
+      </thead>
+      <tbody>
+        <tr><td><strong>Strengths</strong></td><td>Scales to high dimensions; works well in overparameterized regimes</td><td>Highly parallelizable; requires no gradient information; simple to implement</td></tr>
+        <tr><td><strong>Weaknesses</strong></td><td>Requires differentiable model and smooth optimization landscape</td><td>Scales poorly to high dimensions (both horizon $H$ and action dimension $|\mathbf{a}|$)</td></tr>
+      </tbody>
+    </table>
+
+    <!-- Section 5: Distribution Mismatch and Online Model Learning -->
+    <h2 id="distribution-mismatch">Distribution Mismatch and Online Model Learning</h2>
+
+    <p>The basic planning algorithm described above can fail catastrophically due to <strong>distribution mismatch</strong>. The model is trained on data from the base policy $\pi_0$, but the planner finds an action sequence that visits states far outside this training distribution. In these out-of-distribution regions, the model's predictions are unreliable, and the planner may exploit these errors.</p>
+
+    <p>Formally, the state distribution under the base policy $p_{\pi_0}(\mathbf{s})$ differs from the state distribution under the final planned policy $p_{\pi_f}(\mathbf{s})$:</p>
+
+    $$p_{\pi_0}(\mathbf{s}) \neq p_{\pi_f}(\mathbf{s})$$
+
+    <p>This is exactly the same distribution shift problem that arises in behavioral cloning (addressed by DAgger in Lecture 2). The solution is analogous: iteratively collect new data under the current planner, retrain the model, and replan.</p>
+
+    <div class="algorithm">
+      <div class="algorithm-title">Planning with Online Model Learning</div>
+      <ol>
+        <li>Run some policy (e.g., random) to collect initial data $\mathcal{D} = \{(\mathbf{s}, \mathbf{a}, \mathbf{s}')_i\}$.</li>
+        <li>Learn model $f_\phi(\mathbf{s}, \mathbf{a})$ to minimize $\sum_i \|f_\phi(\mathbf{s}_i, \mathbf{a}_i) - \mathbf{s}'_i\|^2$.</li>
+        <li>Use the model to plan an action sequence (via backpropagation or CEM).</li>
+        <li><strong>Execute the planned actions</strong> in the real environment, appending the resulting tuples $(\mathbf{s}, \mathbf{a}, \mathbf{s}')$ to $\mathcal{D}$.</li>
+        <li>Go to step 2.</li>
+      </ol>
+    </div>
+
+    <p>By alternating between planning and data collection, the model gradually becomes accurate in the regions of state space that the planner actually visits. This is conceptually identical to DAgger's iterative data aggregation strategy, but applied to dynamics learning rather than policy cloning.</p>
+
+    <div class="callout example">
+      <div class="callout-label">Example</div>
+      <strong>Revisiting the cliff.</strong> With online model learning, the agent initially plans conservatively (the model is uncertain about the cliff region). After executing its plan and collecting new data near the cliff edge, it learns that going too far right leads to falling. Over subsequent iterations, the model becomes accurate in the relevant regions, and the final policy learns to go to the top of the cliff and stop&mdash;achieving the optimal behavior.
+    </div>
+
+    <!-- Section 6: Model-Predictive Control -->
+    <h2 id="model-predictive-control">Model-Predictive Control (MPC)</h2>
+
+    <p>The planning approaches described so far are <strong>open-loop</strong>: the planner computes an entire action sequence $\mathbf{a}_{1:H}$ upfront and then executes it without feedback. This is fragile. If the model is even slightly inaccurate, errors accumulate over the horizon, and the executed trajectory diverges from the plan. In stochastic environments, this problem is even worse&mdash;the plan cannot adapt to unexpected state transitions.</p>
+
+    <p>The solution is <strong>closed-loop</strong> planning, where the agent observes the actual state after each action and replans. This is precisely the idea behind <strong>model-predictive control (MPC)</strong>, a cornerstone technique from classical control theory that adapts naturally to the learned-model setting.</p>
+
+    <div class="algorithm">
+      <div class="algorithm-title">Model-Predictive Control (MPC)</div>
+      <ol>
+        <li>Run a base policy $\pi_0(\mathbf{a}_t \mid \mathbf{s}_t)$ (e.g., random) to collect initial dataset $\mathcal{D} = \{(\mathbf{s}, \mathbf{a}, \mathbf{s}')_i\}$.</li>
+        <li>Learn model $f_\phi(\mathbf{s}, \mathbf{a})$ to minimize $\sum_i \|f_\phi(\mathbf{s}_i, \mathbf{a}_i) - \mathbf{s}'_i\|^2$.</li>
+        <li>Use model $f_\phi(\mathbf{s}, \mathbf{a})$ to plan an optimal action sequence over a horizon $H$.</li>
+        <li><strong>Execute only the first planned action</strong> $\mathbf{a}_t$, observe the resulting state $\mathbf{s}'$.</li>
+        <li>Append $(\mathbf{s}, \mathbf{a}, \mathbf{s}')$ to dataset $\mathcal{D}$.</li>
+        <li>Go to step 2 (periodically retrain model) or step 3 (replan from current state).</li>
+      </ol>
+    </div>
+
+    <p>The key insight of MPC is that by replanning at every time step (or every few steps), the agent can <strong>correct for model errors</strong> in real time. Even if the model's predictions for $\mathbf{s}_{t+5}$ are inaccurate, the agent only commits to $\mathbf{a}_t$ and then replans from the actual state $\mathbf{s}_{t+1}$. This makes MPC remarkably robust to model inaccuracies.</p>
+
+    <div class="callout insight">
+      <div class="callout-label">Key Insight</div>
+      MPC trades compute for robustness. By replanning at every step, it avoids committing to a long sequence of actions based on potentially inaccurate long-horizon predictions. The downside is that planning is computationally expensive, and it must be performed at every time step during execution&mdash;not just during training.
+    </div>
+
+    <h3 id="planning-summary">Summary of Planning with Learned Models</h3>
+
+    <p>The planning-based approach to model-based RL has several appealing properties and limitations:</p>
+
+    <table>
+      <thead>
+        <tr><th>Advantages</th><th>Disadvantages</th></tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td>Simple and modular&mdash;any model can be paired with any planner</td>
+          <td>Compute-intensive at test time (must plan at every step)</td>
+        </tr>
+        <tr>
+          <td>Easy to plug in different goals or rewards, even at test time</td>
+          <td>Only practical for short-horizon problems or very shaped reward functions</td>
+        </tr>
+        <tr>
+          <td>MPC naturally corrects for model errors</td>
+          <td>Model accuracy degrades over long horizons</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <p>The short-horizon limitation arises for two reasons: (a) planning over long horizons is computationally expensive (the search space grows exponentially with $H$), and (b) model prediction errors compound over many steps, making long-horizon model predictions unreliable. This naturally raises the question: <em>can we train a policy using a learned model</em>, so that we do not need to plan at test time?</p>
+
+    <!-- Section 7: Model-Based Policy Optimization -->
+    <h2 id="model-based-policy-optimization">Model-Based Policy Optimization</h2>
+
+    <p>Rather than using the model purely for planning at test time, an alternative is to use it to <strong>generate training data</strong> for a model-free RL algorithm. This combines the sample efficiency of model-based methods with the flexibility and long-horizon capability of model-free policy learning.</p>
+
+    <h3 id="distillation">Option 1: Distilling the Planner into a Policy</h3>
+
+    <p>The simplest approach is to run the MPC planner to generate actions across many states, then train a policy network $\pi_\phi(\mathbf{a} \mid \mathbf{s})$ to imitate the planner's actions via supervised learning. This is essentially behavioral cloning where the "expert" is the planner itself.</p>
+
+    <ul>
+      <li><strong>Advantage:</strong> No longer compute-intensive at test time&mdash;the policy network produces actions in a single forward pass.</li>
+      <li><strong>Limitation:</strong> Still limited to short-horizon problems, since the planner it imitates can only plan over short horizons.</li>
+    </ul>
+
+    <p>To solve longer-horizon problems, we need a different strategy. Two key ideas are: (1) plan with a <em>terminal value function</em> that estimates long-term reward beyond the planning horizon, and (2) <strong>augment model-free RL methods with data generated from the model</strong>. The second approach leads to the family of algorithms known as model-based policy optimization.</p>
+
+    <h3 id="data-augmentation">Option 2: Data Augmentation via Model Rollouts</h3>
+
+    <p>The central idea of model-based policy optimization (MBPO) is to use the learned model to <strong>generate synthetic transition data</strong> that augments the real environment data. The model-free RL algorithm (e.g., SAC) then trains on both real and synthetic data, gaining the sample efficiency of model-based methods without being limited to short planning horizons.</p>
+
+    <p>A critical design question is <em>how</em> to generate the synthetic data. Three natural strategies reveal increasing sophistication:</p>
+
+    <ol>
+      <li><strong>Full trajectories from initial states.</strong> Reset to an initial state and roll out the model for many steps. The problem: the model may not be accurate over long horizons, and the resulting trajectories may be unrealistic.</li>
+      <li><strong>Short trajectories from initial states.</strong> Generate partial rollouts from initial states to stay within the model's accuracy window. The problem: later states in the trajectory are underrepresented, leading to poor coverage.</li>
+      <li><strong>Short trajectories ("branched rollouts") from all states in the real data.</strong> For each state visited in real environment interactions, generate a short model rollout of $k$ steps using the current policy. This provides good coverage across the entire trajectory while keeping rollouts short enough for the model to remain accurate.</li>
+    </ol>
+
+    <p>The third strategy is the key insight behind MBPO (Janner et al., 2019). By branching short rollouts from every state in the real dataset, the method achieves broad coverage without requiring the model to be accurate over long horizons.</p>
+
+    <div class="algorithm">
+      <div class="algorithm-title">Model-Based Policy Optimization (MBPO)</div>
+      <p>Repeat:</p>
+      <ol>
+        <li><strong>Collect real data:</strong> Run current policy $\pi_\phi$ in the real environment, add transitions to $\mathcal{D}_{\text{env}}$.</li>
+        <li><strong>Update model:</strong> Train dynamics model $p_\theta(\mathbf{s}' \mid \mathbf{s}, \mathbf{a})$ using $\mathcal{D}_{\text{env}}$.</li>
+        <li><strong>Generate synthetic data:</strong> For states $\mathbf{s}$ sampled from $\mathcal{D}_{\text{env}}$, roll out $\pi_\phi$ in the model $p_\theta$ for $k$ steps. Add the resulting transitions to $\mathcal{D}_{\text{model}}$.</li>
+        <li><strong>Update policy:</strong> Perform model-free RL updates (e.g., SAC) on policy $\pi_\phi$ and critic $Q$ using data from $\mathcal{D}_{\text{model}}$ (and optionally $\mathcal{D}_{\text{env}}$).</li>
+      </ol>
+    </div>
+
+    <div class="callout insight">
+      <div class="callout-label">Key Insight</div>
+      MBPO is compatible with any model-free RL algorithm in step 4. The model serves purely as a data-generation engine&mdash;a way to amplify a small amount of real experience into a much larger synthetic dataset. The rollout horizon $k$ is a tunable hyperparameter that controls the trade-off between data quantity (longer rollouts produce more data) and data quality (shorter rollouts are more accurate).
+    </div>
+
+    <details class="proof">
+      <summary>Why branched rollouts help with coverage</summary>
+      <div class="proof-content">
+        <p>Consider a real trajectory $\mathbf{s}_1 \to \mathbf{s}_2 \to \cdots \to \mathbf{s}_T$. If we only generate synthetic rollouts from the initial state $\mathbf{s}_1$, the model must be accurate for up to $T$ steps to produce useful training data for the later parts of the trajectory. With branched rollouts, we generate short $k$-step rollouts from every state $\mathbf{s}_t$ in the trajectory. This means the policy receives training signal for states near $\mathbf{s}_T$ without the model ever needing to predict more than $k$ steps ahead. The model error in each synthetic transition is bounded by the single-step prediction error, and the coverage of the synthetic data mirrors the coverage of the real data, modulo $k$ steps of model drift.</p>
+      </div>
+    </details>
+
+    <!-- Section 8: When to Use Model-Based RL -->
+    <h2 id="when-to-use">When to Use Model-Based RL</h2>
+
+    <p>Model-based RL offers significant advantages but also introduces new challenges. The decision of whether to use a model depends critically on the problem domain.</p>
+
+    <h3 id="advantages">Advantages</h3>
+
+    <ul>
+      <li><strong>Sample efficiency.</strong> Model-based methods can be dramatically more data-efficient than model-free methods, particularly when the dynamics are relatively easy to learn. In robotics, this can mean learning a task in hours rather than days.</li>
+      <li><strong>Self-supervised learning.</strong> The dynamics model can be trained without reward labels&mdash;it only needs $(s, a, s')$ tuples. This means data collection for the model does not require a reward function, and in principle, the same model can be reused across different tasks.</li>
+      <li><strong>Task-agnostic models.</strong> Because the dynamics model captures how the world works rather than what the task is, a well-trained model can sometimes be transferred across different reward functions or goals. This is particularly appealing in robotics, where the physics are shared across tasks.</li>
+    </ul>
+
+    <h3 id="disadvantages">Disadvantages</h3>
+
+    <ul>
+      <li><strong>Model error and the objective mismatch problem.</strong> The dynamics model is typically trained to minimize prediction error (e.g., MSE on next-state predictions), not to maximize task reward. A model might be very accurate in irrelevant parts of the state space and inaccurate in the parts that matter most for the task. This is known as the <em>objective mismatch</em> problem.</li>
+      <li><strong>Sometimes harder to learn than a policy.</strong> Predicting the full next state is in some sense a harder problem than learning a good policy. The model must accurately predict all state dimensions, while a policy only needs to know which action is best. For high-dimensional observation spaces (e.g., images), learning an accurate forward model can be prohibitively difficult.</li>
+      <li><strong>Added complexity.</strong> Model-based methods require training and tuning an additional model, introducing more hyperparameters (model architecture, ensemble size, rollout length, model update frequency, etc.) and more compute.</li>
+    </ul>
+
+    <div class="callout insight">
+      <div class="callout-label">Key Insight</div>
+      Whether to use a model depends on <strong>how hard it is to learn</strong>. In domains with low-dimensional state spaces and smooth dynamics (e.g., robotic control with joint-angle states), model-based methods often shine. In domains with high-dimensional observations and complex, discontinuous dynamics (e.g., contact-rich manipulation from pixels), model-free methods may be more practical. The best choice is always domain-dependent.
+    </div>
+
+    <h3 id="other-models">Other Kinds of Models</h3>
+
+    <p>The standard forward dynamics model $p(\mathbf{s}_{t+1} \mid \mathbf{s}_t, \mathbf{a}_t)$ is not the only useful type of model. Several alternative formulations serve different purposes:</p>
+
+    <ul>
+      <li><strong>Inverse model:</strong> $p(\mathbf{a}_t \mid \mathbf{s}_t, \mathbf{s}_{t+1})$ &mdash; predicts what action was taken to cause a particular transition. Useful for learning from observation-only demonstrations.</li>
+      <li><strong>Multi-step inverse model:</strong> $p(\mathbf{a}_t \mid \mathbf{s}_t, \mathbf{s}_{t+n})$ or $p(\mathbf{a}_{t:t+n} \mid \mathbf{s}_t, \mathbf{s}_{t+n})$ &mdash; predicts actions needed to reach a distant state.</li>
+      <li><strong>Future prediction without actions:</strong> $p(\mathbf{s}_{t+1:t+n} \mid \mathbf{s}_t)$ &mdash; predicts future states without conditioning on actions. Useful for learning representations of environment dynamics.</li>
+      <li><strong>Video interpolation:</strong> $p(\mathbf{s}_{t+1:t+n} \mid \mathbf{s}_t, \mathbf{s}_{t+n+1})$ &mdash; fills in intermediate states given start and end states.</li>
+      <li><strong>Joint transition distribution:</strong> $p(\mathbf{s}_t, \mathbf{a}_t, \mathbf{s}_{t+1})$ &mdash; models the full joint distribution of transitions rather than just the conditional.</li>
+    </ul>
+
+    <p>Each of these model types captures different aspects of the environment structure and can be useful for specific downstream tasks, from goal-conditioned planning to representation learning.</p>
+
+    <!-- Section 9: Case Study: Dexterous Manipulation with PDDM -->
+    <h2 id="case-study-pddm">Case Study: Dexterous Manipulation with PDDM</h2>
+
+    <p>To make the ideas of model-based RL concrete, we examine a landmark case study: <strong>Deep Dynamics Models for Learning Dexterous Manipulation</strong> (Nagabandi, Konoglie, Levine, and Kumar; Google Brain, 2019). This work remains one of the most impressive demonstrations of model-based RL on five-fingered dexterous manipulation and provides valuable ablation studies on what design choices matter most.</p>
+
+    <h3 id="pddm-setup">Problem Setup</h3>
+
+    <p>The task is to control a five-fingered robotic hand (the ShadowHand, with 24 degrees of freedom) to manipulate objects&mdash;including rotating Baoding balls and tracking a pencil along a target trajectory. The problem setup is:</p>
+
+    <ul>
+      <li><strong>State space:</strong> hand joint positions and velocities, plus object positions and orientations.</li>
+      <li><strong>Action space:</strong> 24-dimensional continuous control of the five-fingered hand.</li>
+      <li><strong>Reward:</strong> tracking error to a target object trajectory, plus a penalty for dropping the object.</li>
+    </ul>
+
+    <h3 id="pddm-method">Method: PDDM</h3>
+
+    <p>The proposed method, called PDDM (Planning with Deep Dynamics Models), uses a model-based planning approach with several carefully chosen design decisions:</p>
+
+    <ul>
+      <li><strong>Model:</strong> An ensemble of 3 neural networks, each with 2 hidden layers of size 500. The ensemble helps estimate model uncertainty&mdash;when the ensemble members disagree, the model is likely inaccurate in that region of state space.</li>
+      <li><strong>Planner:</strong> A modified version of the cross-entropy method (CEM), incorporating softer reward-weighted means (rather than hard elite selection) and temporal smoothing on the action sequences. These modifications produce smoother, more physically plausible action sequences.</li>
+      <li><strong>Training loop:</strong> The system alternates between collecting approximately 30 trajectories using the planner and then updating the dynamics model on the accumulated dataset.</li>
+    </ul>
+
+    <h3 id="pddm-results">Results and Comparisons</h3>
+
+    <p>The authors compared PDDM against both model-free and model-based baselines in simulation:</p>
+
+    <ul>
+      <li><strong>Model-free methods:</strong> SAC (actor-critic) and NPG (natural policy gradient)&mdash;these required far more data to achieve comparable performance.</li>
+      <li><strong>Model-based baselines:</strong> MBPO (RL with model-generated data), PETS (a CEM-based planner without the PDDM modifications), and Nagabandi et al. (random shooting without ensembles)&mdash;PDDM outperformed all of these.</li>
+    </ul>
+
+    <p>The key findings: model-based methods were <strong>more sample-efficient</strong> than model-free methods, and PDDM was <strong>more performant</strong> than other model-based methods on these dexterous tasks.</p>
+
+    <h3 id="pddm-ablations">Ablation Studies</h3>
+
+    <p>The ablation studies reveal several important practical lessons for model-based RL:</p>
+
+    <ul>
+      <li><strong>Model capacity matters.</strong> A sufficiently large model (2 hidden layers of size 500) was needed; smaller models (e.g., 2 x 64) performed significantly worse.</li>
+      <li><strong>Ensembles are important.</strong> At least 3 ensemble members were needed for reliable performance. A single model was noticeably worse, likely because it cannot capture model uncertainty.</li>
+      <li><strong>Planning horizon is a trade-off.</strong> Too short a horizon (2 steps) limited the planner's ability to reason about the future, while too long a horizon (15 steps) introduced compounding model errors. An intermediate horizon (5&ndash;7 steps) worked best.</li>
+      <li><strong>Modified CEM is crucial.</strong> The reward-weighted mean and temporal smoothing in PDDM's modified CEM significantly outperformed both standard CEM and random shooting. This underscores that the planner's optimization quality matters as much as the model's accuracy.</li>
+    </ul>
+
+    <h3 id="pddm-real-world">Real-World Results</h3>
+
+    <p>Perhaps the most compelling result was the transfer to a real ShadowHand robot performing Baoding ball rotation. Sample efficiency was critical here: the hardware is fragile and expensive, making data collection costly. PDDM learned the Baoding ball rotation task in approximately <strong>4 hours</strong> of real-world interaction&mdash;a feat that would have been impractical with model-free methods. The ball was reset using a separate robot arm to enable autonomous training.</p>
+
+    <div class="callout example">
+      <div class="callout-label">Example</div>
+      <strong>Why sample efficiency matters in the real world.</strong> The ShadowHand costs over &#36;100,000 and has delicate tendons that wear with use. Model-free methods like SAC might require millions of time steps (days of continuous operation) to learn dexterous tasks, during which the hardware could degrade or break. By learning from just a few hours of data, model-based methods make such experiments feasible on real hardware.
+    </div>
+
+    <!-- Section 10: Summary and Looking Ahead -->
+    <h2 id="summary">Summary and Looking Ahead</h2>
+
+    <p>Model-based reinforcement learning offers a compelling alternative to model-free methods when sample efficiency is important and the dynamics are learnable. The key ideas covered in this lecture form a coherent progression:</p>
+
+    <ol>
+      <li><strong>Learn a dynamics model</strong> $f_\phi(\mathbf{s}, \mathbf{a})$ from environment interaction data, using supervised learning (MSE regression).</li>
+      <li><strong>Use the model for planning</strong>&mdash;optimizing action sequences via gradient-based (backpropagation) or sampling-based (CEM) methods.</li>
+      <li><strong>Address distribution mismatch</strong> by iteratively collecting data under the current plan and retraining the model (analogous to DAgger).</li>
+      <li><strong>Use model-predictive control (MPC)</strong> to replan at each time step, gaining robustness to model errors at the cost of increased test-time computation.</li>
+      <li><strong>Use the model for data generation</strong> (MBPO) to augment model-free RL with synthetic rollouts, combining the sample efficiency of model-based methods with the long-horizon capability of model-free policy learning.</li>
+    </ol>
+
+    <p>The fundamental trade-off in model-based RL is between the <strong>benefits</strong> of increased sample efficiency and task-agnostic learning, and the <strong>costs</strong> of model error, objective mismatch, and added complexity. The PDDM case study demonstrates that with careful engineering&mdash;ensembles, modified CEM, appropriate horizon lengths&mdash;model-based methods can achieve impressive results on challenging real-world robotics tasks.</p>
+
+    <p>In the next lecture, we turn to <strong>multi-task and goal-conditioned RL</strong>, examining how to train generalist policies that can perform many tasks rather than specializing in a single one. Model-based methods will make a natural appearance there as well, since a learned dynamics model is inherently task-agnostic and can be shared across goals.</p>
+
   </article>
 
   <nav class="lecture-nav">

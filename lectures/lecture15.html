@@ -46,14 +46,287 @@
       <span class="lecture-tag">Subgoals</span>
       <span class="lecture-tag">Hierarchical Policies</span>
     </div>
-    <a class="lecture-pdf-link" href="../slides/cs224r_2025_lecture15.pdf" target="_blank">
+    <a class="lecture-pdf-link" href="../slides/15_cs224r_hierarchy_2025.pdf" target="_blank">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
       Original PDF slides
     </a>
   </div>
 
   <article class="lecture-article">
-    <!-- Content will be added in Phase 3 -->
+
+    <!-- Section 1: The Long-Horizon Challenge and Hierarchical Decomposition -->
+    <h2 id="long-horizon-challenge">The Long-Horizon Challenge</h2>
+
+    <p>Consider the everyday tasks that humans handle effortlessly: cooking a meal from scratch, driving across town, debugging a complex software system, or giving detailed feedback on a lengthy report. Each of these tasks involves hundreds or thousands of individual decisions, executed over extended time horizons. In the language of reinforcement learning, these are <strong>long-horizon tasks</strong>&mdash;problems where the agent must visit a very large number of states, make many sequential decisions, and navigate through a landscape full of pitfalls.</p>
+
+    <p>Three factors conspire to make long-horizon tasks especially challenging for standard RL and imitation learning methods:</p>
+
+    <ol>
+      <li><strong>Enormous state spaces.</strong> The number of states visited during a long task grows rapidly. A flat policy must learn to map every possible state to the right action, and the space of possible trajectories becomes intractably large.</li>
+      <li><strong>Compounding errors.</strong> At every time step, there is an opportunity for the agent to make a mistake. Over hundreds of steps, even a small per-step error rate compounds into a high probability of overall failure. This is the same compounding-error phenomenon we encountered with behavioral cloning in earlier lectures.</li>
+      <li><strong>Getting stuck.</strong> Without structure, exploration in a flat action space is unlikely to stumble upon the precise sequence of actions needed to complete a multi-stage task. The agent can easily enter states from which it cannot recover.</li>
+    </ol>
+
+    <div class="callout example">
+      <div class="callout-label">Example</div>
+      <strong>Baking a cheesecake.</strong> The high-level task "bake a cheesecake" decomposes naturally into a hierarchy of subtasks: buy ingredients, go to the store, walk to the door, take a step, contract a quad muscle. The top of the hierarchy is extremely hard to learn end-to-end, while the bottom is trivially easy. This suggests a powerful insight: can we break hard tasks into easier subtasks?
+    </div>
+
+    <h3 id="hierarchical-idea">The Hierarchical Decomposition</h3>
+
+    <p>The central idea of <strong>hierarchical reinforcement learning (HRL)</strong> is to decompose a difficult long-horizon task into a cascade of simpler sub-problems. Instead of a single monolithic policy that maps observations directly to low-level actions, we introduce at least two levels of decision-making:</p>
+
+    <div class="callout definition">
+      <div class="callout-label">Definition</div>
+      <strong>Hierarchical Policy.</strong> A hierarchical policy consists of (at minimum) two components:
+      <ul>
+        <li>A <strong>high-level policy</strong> $\pi_{\text{HL}}$ that takes the current observation $\mathbf{o}_t$ and task description (e.g., a language prompt) and produces an intermediate <strong>goal</strong> $\mathbf{g}_t$.</li>
+        <li>A <strong>low-level policy</strong> $\pi_{\text{LL}}$ that takes the current observation $\mathbf{o}_t$ and the goal $\mathbf{g}_t$, and produces primitive actions $\mathbf{a}_t$ to accomplish that goal.</li>
+      </ul>
+      The low-level policy operates at a higher frequency than the high-level policy. More than two levels of hierarchy are possible.
+    </div>
+
+    <p>The intermediate goals $\mathbf{g}_t$ go by many names in the literature: <em>subgoals</em>, <em>subtasks</em>, <em>skills</em>, <em>options</em>, or <em>high-level actions</em>. Regardless of terminology, they serve the same purpose&mdash;they provide a structured interface between the strategic, slow-thinking high level and the reactive, fast-acting low level.</p>
+
+    <div class="algorithm">
+      <div class="algorithm-title">Rolling Out a Hierarchical Policy</div>
+      <ol>
+        <li>Observe initial observation $\mathbf{o}_1$ at $t = 1$.</li>
+        <li>Plan goal $\mathbf{g}_t$ according to $\pi_{\text{HL}}(\cdot \mid \mathbf{o}_t, \text{prompt})$.</li>
+        <li>Until a new goal is selected:
+          <ol type="a">
+            <li>Execute predicted action $\mathbf{a}_t$ according to $\pi_{\text{LL}}(\cdot \mid \mathbf{o}_t, \mathbf{g}_t)$.</li>
+            <li>$t \leftarrow t + 1$, observe new observation $\mathbf{o}_t$.</li>
+          </ol>
+        </li>
+        <li>Return to step 2 to select the next goal.</li>
+      </ol>
+    </div>
+
+    <h2 id="why-hierarchy-helps">Why Hierarchy Helps</h2>
+
+    <p>Hierarchy is not merely an architectural convenience&mdash;it provides several concrete advantages over flat policies:</p>
+
+    <ol>
+      <li><strong>Supervision signal.</strong> The intermediate goals provide a supervision signal on <em>how</em> to complete the task, not just whether it was completed. The high-level policy decomposes the "what" while the low-level policy handles the "how."</li>
+      <li><strong>Knowledge sharing across subtasks.</strong> A low-level skill like "pick up object" can be reused across many different high-level tasks (making a sandwich, cleaning a room, packing a box). This compositionality dramatically improves sample efficiency.</li>
+      <li><strong>Structured exploration.</strong> In RL, the high-level policy explores in a much lower-dimensional goal space rather than the raw action space. Exploring over subgoals like "go to the kitchen" is far more efficient than exploring over individual joint torques.</li>
+      <li><strong>Computational efficiency.</strong> In robotics, low-level controllers often must run at 50 Hz or higher for stable control, while high-level planning can operate at 1-5 Hz. A hierarchical architecture naturally accommodates these different time scales, running expensive reasoning models infrequently and cheap reactive controllers at high frequency.</li>
+    </ol>
+
+    <h3 id="hierarchy-vs-flat">Hierarchy vs. Flat Policies vs. Chain of Thought</h3>
+
+    <p>It is worth asking: do we really need <em>separate</em> policies? There are three architectural paradigms to consider:</p>
+
+    <ul>
+      <li><strong>Hierarchy:</strong> Two (or more) separate policies. $\pi_{\text{HL}}$ produces goals $\mathbf{g}_t$; $\pi_{\text{LL}}$ produces actions $\mathbf{a}_t$ conditioned on $\mathbf{g}_t$.</li>
+      <li><strong>Flat policy:</strong> A single policy $\pi$ maps directly from observations and the task prompt to actions $\mathbf{a}_t$.</li>
+      <li><strong>Chain of thought:</strong> A single policy $\pi$ that outputs both goals $\mathbf{g}_t$ <em>and</em> actions $\mathbf{a}_t$ together, akin to "thinking out loud" before acting.</li>
+    </ul>
+
+    <p>The chain-of-thought approach can benefit from the same supervision signal as hierarchy. However, it may be too computationally expensive for real-time control (e.g., at 50 Hz) since the model must produce both the reasoning and the action at every step. As of now, there is no conclusive empirical comparison between these paradigms, and this remains an active area of research.</p>
+
+    <div class="callout insight">
+      <div class="callout-label">Key Insight</div>
+      If you train a hierarchical policy end-to-end with a completely latent (unconstrained) goal representation, the model will simply learn to ignore the hierarchy and collapse into a flat policy. The benefits of hierarchy come specifically from the <em>structure</em> imposed on the intermediate representation&mdash;think carefully about where the benefits are coming from!
+    </div>
+
+    <!-- Section: Design Choices -->
+    <h2 id="goal-representations">Design Choice 1: Goal Representations</h2>
+
+    <p>The choice of how to represent intermediate goals $\mathbf{g}_t$ is perhaps the most critical design decision in hierarchical RL. The best representation will often be domain-specific, but good goal representations share three key properties:</p>
+
+    <ol>
+      <li><strong>Expressiveness.</strong> The representation must be able to communicate many different low-level behaviors. If the goal space is too restrictive, the high-level policy cannot express the full range of subtasks needed.</li>
+      <li><strong>Structure.</strong> Similar behaviors should map to similar goals. A well-structured goal space enables generalization&mdash;if the low-level policy can accomplish goal $\mathbf{g}$, it should also be able to accomplish nearby goals $\mathbf{g}'$.</li>
+      <li><strong>Appropriate level of abstraction.</strong> Goals should not be so abstract that the low-level policy cannot interpret them, nor so concrete that the high-level policy has to micromanage. The right abstraction level depends on the capabilities of both policies.</li>
+    </ol>
+
+    <p>Common goal representations used in practice include:</p>
+
+    <ul>
+      <li><strong>Language instructions</strong> (e.g., "pick up the bag", "move the scoop into the bowl"). Natural language is highly expressive, naturally structured via semantics, and easy for humans to provide as supervision. Language is particularly well-suited when the subtasks have clear semantic descriptions.</li>
+      <li><strong>Goal images</strong> (e.g., an image depicting the desired scene after the subtask). Images specify precisely what the world should look like, avoiding the ambiguity of language. They can be generated by image-editing models and can leverage large-scale unlabeled video data.</li>
+      <li><strong>State vectors</strong> (e.g., target positions of the robot and objects). State-based goals are precise and low-dimensional, making them efficient for RL training. However, they require access to ground-truth state information.</li>
+      <li><strong>Learned latent representations.</strong> The goal can live in a learned embedding space, but care must be taken to ensure the latent space is structured and interpretable&mdash;otherwise the hierarchy collapses to a flat policy.</li>
+    </ul>
+
+    <div class="callout example">
+      <div class="callout-label">Example</div>
+      <strong>Choosing goals for different tasks.</strong> Consider a robot that cooks Italian dishes: language goals like "chop the tomatoes" and "boil the pasta" are natural and expressive. For a bicycle navigation agent, goal states representing target GPS coordinates are more appropriate. For a legal brief-drafting system, language goals describing each section would work well. The right representation depends on the domain.
+    </div>
+
+    <h2 id="supervision">Design Choice 2: Supervising Each Level</h2>
+
+    <p>A hierarchical policy introduces a <strong>chicken-and-egg problem</strong> for training. The low-level policy and the high-level policy depend on each other:</p>
+
+    <ul>
+      <li>The <strong>low-level policy</strong> is trained to accomplish goals $\mathbf{g}$, not the original long-horizon task. But for which distribution of goals should it be trained? Ideally, whatever goals the high-level policy will output&mdash;but we have not learned a high-level policy yet.</li>
+      <li>The <strong>high-level policy</strong> is trained to accomplish the original, long-horizon task by selecting appropriate subgoals. But it should be evaluated using the learned low-level policy&mdash;which we have not finished training either.</li>
+    </ul>
+
+    <p>In practice, several strategies address this interdependency:</p>
+
+    <ol>
+      <li><strong>Sequential training.</strong> Train the low-level policy first on a broad distribution of goals (e.g., from demonstrations or self-play), then train the high-level policy using the frozen low-level policy. This is simple but the low-level may not cover all goals the high-level wants to issue.</li>
+      <li><strong>Joint fine-tuning.</strong> After initial separate training, fine-tune both levels together so that each adapts to the other's behavior. At minimum, at least one policy should be adapted to the deficiencies of the other.</li>
+      <li><strong>LLMs as high-level policies.</strong> Large language models can serve as effective high-level policies out of the box, since they already understand task decomposition through pre-training. This sidesteps the high-level training problem entirely.</li>
+    </ol>
+
+    <div class="callout insight">
+      <div class="callout-label">Key Insight</div>
+      Why not train everything end-to-end with a latent goal representation? Because without explicit structure or supervision on the goals, the system collapses into a flat policy&mdash;the intermediate "goals" become meaningless latent codes that the low-level policy ignores. The power of hierarchy comes from meaningful decomposition, not from architectural scaffolding alone.
+    </div>
+
+    <h2 id="subgoal-transitions">Design Choice 3: When to Transition Between Subgoals</h2>
+
+    <p>A critical question in hierarchical policy execution is: <em>when should the high-level policy be re-queried to produce a new goal?</em> There are two primary approaches, each with distinct trade-offs.</p>
+
+    <h3 id="completion-based">Option 1: Completion-Based Transitions</h3>
+
+    <p>Re-query the high-level policy when the low-level policy has <em>completed</em> the current goal $\mathbf{g}_t$, estimated by measuring progress toward the goal (e.g., via a learned success classifier or distance metric).</p>
+
+    <ul>
+      <li><strong>Advantage:</strong> Ideal in principle&mdash;each subgoal is fully executed before moving on.</li>
+      <li><strong>Disadvantage:</strong> Estimating when a subtask is "done" is itself a difficult learning problem. Errors in this estimation can be fatal: if the agent falsely believes it has completed a goal, it moves on prematurely; if it never detects completion, it gets stuck forever. These errors cause the agent to become perpetually stuck, making them more dangerous than errors in the alternative approach.</li>
+    </ul>
+
+    <h3 id="fixed-interval">Option 2: Fixed-Interval Transitions</h3>
+
+    <p>Re-query the high-level policy every $n$ time steps, regardless of whether the current goal has been completed.</p>
+
+    <ul>
+      <li><strong>Advantage:</strong> Simple to implement and avoids the risk of permanent stalling.</li>
+      <li><strong>Disadvantage:</strong> Introduces a trade-off between computational cost and responsiveness. With small $n$, the high-level policy must reason at high frequency, increasing compute. With large $n$, the low-level policy may execute wrong actions for many steps if the high-level goal was poorly chosen. Additionally, small $n$ puts more burden on the high-level policy to make consistent, temporally-coherent plans.</li>
+    </ul>
+
+    <p>In practice, the fixed-interval approach is more common because its failure mode (taking wrong actions for $n$ steps) is less catastrophic than the completion-based approach's failure mode (getting permanently stuck). Many systems use a relatively frequent replanning interval as a compromise.</p>
+
+    <!-- Section: Industry Systems -->
+    <h2 id="industry-systems">Hierarchy in Modern Robot Learning Systems</h2>
+
+    <p>Hierarchical architectures have become the dominant paradigm in state-of-the-art robot learning systems. Several prominent examples from 2025 illustrate how hierarchy is deployed at scale:</p>
+
+    <ul>
+      <li><strong>Physical Intelligence $\pi_{0.5}$:</strong> Uses a pre-trained VLA (vision-language-action model) as a high-level policy that predicts language subtask descriptions (e.g., "pick up the pillow"), paired with an action expert that generates continuous robot actions. The high-level prompt provides the overall task ("clean the bedroom") and the system decomposes it into subtask predictions.</li>
+      <li><strong>NVIDIA Gr00t N1:</strong> Separates a vision-language model ("System 2" for high-level semantic reasoning) from a diffusion transformer ("System 1" for fast reactive control). The VLM processes language instructions and image observations to produce high-level plans, while the diffusion model generates motor actions at high frequency.</li>
+      <li><strong>Figure Helix:</strong> Employs a similar two-system architecture with an infrequent vision-language semantic reasoning module and a fast reactive control module that generates whole-body control at high frequency.</li>
+      <li><strong>Gemini Robotics:</strong> Uses a cloud-based backbone for high-level reasoning connected to a local action decoder for real-time control, explicitly separating the slow cloud inference from fast local execution.</li>
+    </ul>
+
+    <div class="callout insight">
+      <div class="callout-label">Key Insight</div>
+      The convergence of multiple industry systems toward hierarchical architectures is driven by a practical constraint: high-level reasoning models (VLMs, LLMs) are computationally expensive and run slowly, while robot control requires fast, reactive decisions. Hierarchy naturally decouples these requirements, allowing expensive models to run at 1-5 Hz and lightweight controllers at 50+ Hz.
+    </div>
+
+    <!-- Section: Hierarchical Imitation Learning Examples -->
+    <h2 id="hierarchical-imitation">Hierarchical Imitation Learning: Example Systems</h2>
+
+    <h3 id="hierarchical-imitation-language">Language Subgoals</h3>
+
+    <p>One of the most natural instantiations of hierarchy uses <strong>language</strong> as the goal representation. This approach requires segmented demonstration data where each demonstration is divided into subtask segments, each annotated with a language description.</p>
+
+    <h3 id="language-data">Data and Training</h3>
+
+    <p>The training data consists of robot demonstrations segmented into sub-episodes, where each segment is labeled with a language command describing the subtask (e.g., "pick up the bag", "open the bag with scoop", "pour it into the bag"). Given this data, both levels of the hierarchy are trained with imitation learning:</p>
+
+    <ul>
+      <li>The <strong>high-level language policy</strong> takes RGB image observations and predicts the next language subtask command.</li>
+      <li>The <strong>low-level LCBC (Language-Conditioned Behavioral Cloning) policy</strong> takes RGB images, joint states, and the language command, and predicts joint target actions.</li>
+    </ul>
+
+    <h3 id="dagger-finetuning">Fine-Tuning with DAgger</h3>
+
+    <p>A key advantage of the language-based hierarchy is that the <strong>high-level policy can be fine-tuned using only language supervision</strong>&mdash;no kinesthetic demonstrations required. The "Yell At Your Robot" system (Shi, Hu, Zhao, Sharma, Pertsch, Leo, Levine, Finn; RSS 2024) demonstrated this through hierarchical DAgger:</p>
+
+    <ol>
+      <li>Deploy the hierarchical policy with the low-level policy <strong>frozen</strong>.</li>
+      <li>A human observer provides <strong>language corrections</strong> when the high-level policy makes a wrong subtask prediction (e.g., saying "avoid pouring outside the bag" when the robot is about to spill).</li>
+      <li>These language corrections override the high-level policy's prediction and are recorded as training data.</li>
+      <li>The high-level policy is updated via gradient descent on the collected corrections, following the DAgger paradigm.</li>
+    </ol>
+
+    <p>After fine-tuning, the high-level policy internalizes the corrections and can <strong>self-correct</strong>&mdash;it learns to predict the right subtask without human intervention. Experimental results from Hi Robot (Shi et al., ICML 2025) show that hierarchy provides a 19-34% improvement over flat VLA policies on long-horizon tasks, and DAgger-based fine-tuning of the high-level policy closes an additional 20% gap toward oracle (human-corrected) performance.</p>
+
+    <h3 id="hierarchical-imitation-images">Image Subgoals</h3>
+
+    <p>An alternative to language goals is to use <strong>images</strong> as the intermediate representation. In this paradigm, the high-level policy produces a <em>goal image</em> depicting what the scene should look like after completing the next subtask, and the low-level policy is conditioned on this goal image rather than a language command.</p>
+
+    <h3 id="susie">SuSIE: Subgoal Synthesis via Image Editing</h3>
+
+    <p>The SuSIE system (Black, Nakamoto, Atreya, Walke, Finn, Kumar, Levine; ICLR 2024) implements this idea by using an <strong>image editing model</strong> as the high-level policy. Given the current observation and a language task description, the image editor generates a modified version of the current image showing the scene after the next subtask is completed. The low-level policy is a goal-image-conditioned controller trained to reach the depicted scene.</p>
+
+    <p>This approach offers several advantages over language-based hierarchy:</p>
+
+    <ul>
+      <li><strong>No segmented language annotations needed.</strong> The high-level policy can be trained on raw video data without per-segment language labels, significantly reducing the annotation burden.</li>
+      <li><strong>Unlabeled video data.</strong> The high-level image-editing model can incorporate large amounts of unlabeled video data&mdash;including videos of humans performing tasks&mdash;to improve its understanding of what intermediate states should look like.</li>
+      <li><strong>Unambiguous specification.</strong> Images avoid the ambiguity inherent in natural language by specifying precisely what the world should look like.</li>
+    </ul>
+
+    <p>Experiments demonstrate that including human videos in the high-level policy training data improves performance on manipulation tasks. For example, on a suite of tabletop tasks, adding the Something-Something human video dataset to robot-only data (BridgeData) improved average success rates from 0.30 to 0.50 on harder scenes and from 0.80 to 0.88 on easier scenes.</p>
+
+    <!-- Section: Hierarchical RL -->
+    <h2 id="hierarchical-rl">Hierarchical Reinforcement Learning</h2>
+
+    <p>While the imitation-based systems described above learn hierarchical policies from demonstrations, hierarchical <em>reinforcement learning</em> addresses the setting where the agent must discover both the goal decomposition and the low-level skills through trial and error.</p>
+
+    <h3 id="hiro">HIRO: State-Based Goal-Conditioned Hierarchy</h3>
+
+    <p>The HIRO system (Nachum, Gu, Lee, Levine; NeurIPS 2018) represents goals as <strong>state vectors</strong>&mdash;specifically, relative target positions of the agent and objects. The architecture works as follows:</p>
+
+    <ul>
+      <li>The <strong>low-level policy</strong> is a goal-conditioned policy trained with a simple goal-reaching reward: it receives reward proportional to how close the current state is to the target goal state.</li>
+      <li>The <strong>high-level policy</strong> is trained to output goal states (which serve as the high-level "actions"). It is optimized to maximize the task reward using an off-policy RL algorithm.</li>
+      <li><strong>Hindsight relabeling</strong> is used on the high-level actions: after a trajectory is collected, the high-level actions are relabeled with the goals that were actually achieved, improving sample efficiency.</li>
+    </ul>
+
+    <details class="proof">
+      <summary>Why hindsight relabeling helps in hierarchical RL.</summary>
+      <div class="proof-content">
+        <p>Consider a high-level policy that proposes goal $\mathbf{g}$ but the low-level policy actually reaches state $\mathbf{s}'$ instead. Without relabeling, this transition is uninformative for the high-level policy because the proposed goal was not achieved. With <strong>hindsight relabeling</strong>, we retroactively pretend the high-level policy intended to reach $\mathbf{s}'$. This creates a valid training sample: "from state $\mathbf{s}$, if I propose goal $\mathbf{s}'$, the low-level policy will reach $\mathbf{s}'$ and receive reward $r$." This is the hierarchical analog of Hindsight Experience Replay (HER), and it transforms every trajectory into useful training data regardless of whether the original goals were achieved.</p>
+      </div>
+    </details>
+
+    <h3 id="language-rl">Language-Conditioned Hierarchical RL</h3>
+
+    <p>Jiang, Gu, Murphy, and Finn (NeurIPS 2019) extended hierarchical RL to use <strong>language as the goal space</strong>. In this approach:</p>
+
+    <ul>
+      <li>The <strong>low-level policy</strong> is language-conditioned and uses <strong>hindsight language relabeling</strong>&mdash;after a trajectory segment, a language model generates a description of what actually happened, which is used to relabel the training data.</li>
+      <li>The <strong>high-level policy</strong> is trained to output language strings that maximize the task reward, with the language serving as an abstraction for directing low-level behavior.</li>
+    </ul>
+
+    <p>Using language as the goal space in RL is particularly appealing because language inherits the structure of natural language semantics, making the goal space naturally well-organized. However, it requires a mechanism for grounding language in the environment, which can be challenging without pre-training.</p>
+
+    <h3 id="skill-discovery">Unsupervised Skill Discovery</h3>
+
+    <p>A related research direction asks: <em>can we discover a set of diverse skills without any supervision?</em> The DIAYN framework (Eysenbach, Gupta, Ibarz, Levine; ICLR 2019) addresses this by training a set of skills that are maximally distinguishable from each other, using a mutual information objective. The learned skills can then serve as the action space for a high-level policy, providing a form of unsupervised hierarchy.</p>
+
+    <div class="callout definition">
+      <div class="callout-label">Definition</div>
+      <strong>Unsupervised Skill Discovery.</strong> The objective is to learn a set of policies $\{\pi(\cdot \mid s, z)\}_{z \in \mathcal{Z}}$ indexed by skill codes $z$, such that different skill codes produce distinguishable behaviors. This is typically achieved by maximizing the mutual information $I(z; \tau)$ between the skill code $z$ and the resulting trajectory $\tau$, encouraging each skill to visit distinct parts of the state space.
+    </div>
+
+    <!-- Section: Summary -->
+    <h2 id="summary">Summary and Open Questions</h2>
+
+    <p>Hierarchical reinforcement learning addresses the fundamental challenge of long-horizon decision-making by decomposing difficult tasks into manageable subtasks. The key design decisions are:</p>
+
+    <ol>
+      <li><strong>Goal representation:</strong> Language, images, state vectors, or learned embeddings&mdash;each with different trade-offs in expressiveness, structure, and supervision requirements.</li>
+      <li><strong>Supervision for each level:</strong> The high-level and low-level policies can be trained separately or jointly, via imitation learning, RL, or a combination. The co-dependence between levels requires careful handling.</li>
+      <li><strong>Subgoal transition timing:</strong> Completion-based transitions are ideal but fragile; fixed-interval transitions are simpler and more robust in practice.</li>
+    </ol>
+
+    <p>Several important open questions remain in this area:</p>
+
+    <ul>
+      <li><strong>Fine-tuning hierarchical systems with RL.</strong> Most large-scale hierarchical robot learning systems are trained with imitation learning. Fine-tuning them with RL to improve beyond the demonstration data remains an important and largely open research direction.</li>
+      <li><strong>Hierarchy vs. chain-of-thought.</strong> Whether explicit hierarchy (separate models) outperforms implicit hierarchy (a single model that reasons before acting) is an open empirical question, especially as foundation models grow more capable.</li>
+      <li><strong>Automatic subtask discovery.</strong> Current systems largely rely on human-defined task decompositions. Learning to automatically discover the right level of abstraction and the right set of subtasks from data is a long-standing challenge.</li>
+    </ul>
+
   </article>
 
   <nav class="lecture-nav">

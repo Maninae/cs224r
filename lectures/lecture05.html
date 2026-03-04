@@ -46,14 +46,334 @@
       <span class="lecture-tag">TD3</span>
       <span class="lecture-tag">Importance Sampling</span>
     </div>
-    <a class="lecture-pdf-link" href="../slides/cs224r_2025_lecture5.pdf" target="_blank">
+    <a class="lecture-pdf-link" href="../slides/05_cs224r_offpolicy_actor_critic_2025.pdf" target="_blank">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
       Original PDF slides
     </a>
   </div>
 
   <article class="lecture-article">
-    <!-- Content will be added in Phase 3 -->
+
+    <h2 id="on-policy-limitations">The On-Policy Bottleneck</h2>
+    <p>
+      The batch actor-critic algorithm from Lecture 4 is <strong>on-policy</strong>: after each gradient update to $\theta$, we must discard all previously collected data and re-sample from the updated policy $\pi_\theta$. This is enormously wasteful&mdash;in robotics, for instance, a single trajectory might take minutes to collect, yet it is used for exactly one gradient step before being thrown away.
+    </p>
+    <p>
+      <strong>Off-policy</strong> methods break this bottleneck by maintaining a <em>replay buffer</em> $\mathcal{D}$ of past transitions and reusing them across many updates. The central challenge is that transitions $(s, a, r, s')$ stored in $\mathcal{D}$ were collected under older policies $\pi_{\theta_{\text{old}}}$, not the current $\pi_\theta$. We need techniques to correct for this distribution mismatch.
+    </p>
+
+    <div class="callout insight">
+      <div class="callout-label">Key Insight: The Sample-Efficiency Gap</div>
+      <p>On-policy methods like A2C/PPO typically require $10^6$&ndash;$10^8$ environment steps on continuous control benchmarks. Off-policy methods like SAC can solve the same tasks with $10^5$&ndash;$10^6$ steps&mdash;an order-of-magnitude improvement. This matters enormously when data collection is expensive (real robots, complex simulators, human feedback).</p>
+    </div>
+
+    <h2 id="importance-sampling">Importance Sampling for Policy Gradients</h2>
+    <p>
+      One principled approach to off-policy correction is <strong>importance sampling</strong>. If transitions were collected under a behaviour policy $\piB$, we can reweight them to estimate expectations under $\pi_\theta$:
+    </p>
+    $$\E_{a \sim \pi_\theta}\!\left[f(a)\right] = \E_{a \sim \piB}\!\left[\frac{\pi_\theta(a \mid s)}{\piB(a \mid s)}\, f(a)\right].$$
+
+    <p>
+      Applied to the policy gradient, this gives
+    </p>
+    $$\nabla_\theta J(\theta) = \E_{(s,a) \sim \piB}\!\left[\frac{\pi_\theta(a \mid s)}{\piB(a \mid s)}\, \nabla_\theta \log \pi_\theta(a \mid s)\, \hat{A}(s, a)\right].$$
+
+    <p>
+      The ratio $w(s,a) = \pi_\theta(a \mid s) / \piB(a \mid s)$ is the <strong>importance weight</strong>. While this estimator is unbiased, it has a critical flaw.
+    </p>
+
+    <div class="callout definition">
+      <div class="callout-label">Definition: Importance Weight</div>
+      <p>For a transition $(s, a)$ collected under behaviour policy $\piB$, the importance weight is $w(s,a) = \frac{\pi_\theta(a \mid s)}{\piB(a \mid s)}$. This corrects for the mismatch between the data-generating distribution and the target distribution.</p>
+    </div>
+
+    <p>
+      The problem is <strong>variance</strong>. If $\pi_\theta$ and $\piB$ diverge significantly, the importance weights can become very large (or very small), causing the gradient estimate to explode. Over a full trajectory of length $T$, the product of per-step importance weights $\prod_{t=0}^{T-1} w_t$ grows exponentially in $T$, making trajectory-level importance sampling essentially unusable for long horizons.
+    </p>
+
+    <div class="callout insight">
+      <div class="callout-label">Key Insight: Avoiding Full Trajectory Importance Weights</div>
+      <p>Modern off-policy actor-critic methods sidestep the importance-sampling problem entirely for the <em>critic</em> by exploiting the fact that the Bellman equation $\Qpi(s,a) = r(s,a) + \gamma \E_{s'}[\Vpi(s')]$ holds for any transition $(s, a, r, s')$, regardless of which policy generated it. This allows us to train the critic directly from replay-buffer data. The actor update then uses the critic's estimates rather than importance-weighted returns.</p>
+    </div>
+
+    <h2 id="replay-buffers">Replay Buffers</h2>
+    <p>
+      A <strong>replay buffer</strong> (or experience replay memory) is a data structure that stores transitions $(s, a, r, s')$ as they are collected and samples mini-batches uniformly at random for training. First introduced for DQN (Lecture 6) and later adopted by actor-critic methods, replay buffers provide two key benefits:
+    </p>
+    <ul>
+      <li><strong>Sample reuse:</strong> Each transition can be used for many gradient updates, improving data efficiency.</li>
+      <li><strong>Decorrelation:</strong> Randomly sampling from a buffer breaks the temporal correlations in sequential data, stabilising gradient-based learning with neural networks.</li>
+    </ul>
+    <p>
+      Typical buffer sizes range from $10^5$ to $10^6$ transitions. When the buffer is full, the oldest transitions are overwritten (FIFO). The ratio of gradient updates to environment steps&mdash;the <strong>update-to-data (UTD) ratio</strong>&mdash;is a key hyperparameter. Higher UTD ratios improve sample efficiency but can cause overfitting to stale data.
+    </p>
+
+    <h2 id="ddpg">Deep Deterministic Policy Gradient (DDPG)</h2>
+    <p>
+      DDPG (Lillicrap et al., 2016) is an off-policy actor-critic algorithm designed for <strong>continuous action spaces</strong>. Its key innovation is using a <em>deterministic</em> policy $\mu_\theta(s)$ instead of a stochastic one, which avoids the need for importance sampling entirely.
+    </p>
+
+    <h3 id="deterministic-policy-gradient">The Deterministic Policy Gradient</h3>
+    <p>
+      For a deterministic policy $a = \mu_\theta(s)$, the policy gradient simplifies dramatically. Instead of $\nabla_\theta \log \pi_\theta(a \mid s)$, we use the <strong>chain rule through the Q-function</strong>:
+    </p>
+
+    <div class="callout theorem">
+      <div class="callout-label">Theorem: Deterministic Policy Gradient (Silver et al., 2014)</div>
+      <p>For a deterministic policy $\mu_\theta$, the policy gradient is</p>
+      $$\nabla_\theta J(\theta) = \E_{s \sim \mathcal{D}}\!\left[\nabla_a Q_\phi(s, a)\big|_{a=\mu_\theta(s)} \cdot \nabla_\theta \mu_\theta(s)\right].$$
+      <p>This requires no importance weights because the expectation is only over states $s$, which can be sampled from any distribution covering the state space (e.g., the replay buffer).</p>
+    </div>
+
+    <details>
+      <summary>Intuition: Why deterministic gradients avoid importance sampling</summary>
+      <p>In the stochastic case, the policy gradient involves $\E_{a \sim \pi_\theta}[\cdot]$, so off-policy data requires correcting the action distribution. With a deterministic policy, the action is a <em>function</em> of the state: $a = \mu_\theta(s)$. The gradient $\nabla_\theta J$ only involves an expectation over <em>states</em>, not actions. Since we only need states to be representative (not actions to be correctly distributed), we can use any state distribution, including one from a replay buffer.</p>
+    </details>
+
+    <h3 id="ddpg-algorithm">DDPG Algorithm</h3>
+    <p>
+      DDPG combines the deterministic policy gradient with several stabilising techniques:
+    </p>
+
+    <div class="algorithm">
+      <div class="algorithm-title">Deep Deterministic Policy Gradient (DDPG)</div>
+      <ol>
+        <li>Initialise actor $\mu_\theta$, critic $Q_\phi$, and target networks $\mu_{\theta'} \leftarrow \mu_\theta$, $Q_{\phi'} \leftarrow Q_\phi$.</li>
+        <li>Initialise replay buffer $\mathcal{D}$.</li>
+        <li><strong>For each environment step:</strong>
+          <ol>
+            <li>Select action $a = \mu_\theta(s) + \epsilon$, where $\epsilon \sim \mathcal{N}(0, \sigma^2)$ (exploration noise).</li>
+            <li>Execute $a$, observe $r, s'$. Store $(s, a, r, s')$ in $\mathcal{D}$.</li>
+            <li>Sample mini-batch $\{(s_j, a_j, r_j, s_j')\}$ from $\mathcal{D}$.</li>
+            <li>Compute target: $y_j = r_j + \gamma\, Q_{\phi'}(s_j', \mu_{\theta'}(s_j'))$.</li>
+            <li>Update critic: $\phi \leftarrow \phi - \alpha_\phi \nabla_\phi \frac{1}{|\mathcal{B}|}\sum_j (Q_\phi(s_j, a_j) - y_j)^2$.</li>
+            <li>Update actor: $\theta \leftarrow \theta + \alpha_\theta \frac{1}{|\mathcal{B}|}\sum_j \nabla_a Q_\phi(s, a)|_{a=\mu_\theta(s_j)} \nabla_\theta \mu_\theta(s_j)$.</li>
+            <li>Soft update targets: $\theta' \leftarrow \tau\theta + (1-\tau)\theta'$, $\phi' \leftarrow \tau\phi + (1-\tau)\phi'$.</li>
+          </ol>
+        </li>
+      </ol>
+    </div>
+
+    <p>
+      The <strong>target networks</strong> $\mu_{\theta'}$ and $Q_{\phi'}$ are slowly-updated copies of the main networks (Polyak averaging with $\tau \approx 0.005$). They stabilise the TD targets, preventing the feedback loop where the critic chases a rapidly moving target. Exploration is achieved by adding Gaussian or Ornstein-Uhlenbeck noise to the deterministic action.
+    </p>
+
+    <h2 id="td3">Twin Delayed DDPG (TD3)</h2>
+    <p>
+      DDPG often suffers from <strong>overestimation bias</strong> in the critic and brittle training dynamics. <strong>TD3</strong> (Fujimoto et al., 2018) addresses these issues with three targeted modifications.
+    </p>
+
+    <h3 id="td3-trick1">Trick 1: Clipped Double Q-Learning</h3>
+    <p>
+      TD3 maintains <em>two</em> independent Q-networks, $Q_{\phi_1}$ and $Q_{\phi_2}$, and uses the <strong>minimum</strong> of their target values to form the Bellman target:
+    </p>
+    $$y = r + \gamma \min_{i=1,2} Q_{\phi_i'}(s', \tilde{a}'),$$
+    <p>
+      where $\tilde{a}'$ is the target action (see Trick 3). Taking the minimum counteracts the positive bias that arises because $\max$ operations over noisy Q-estimates systematically overestimate true values.
+    </p>
+
+    <div class="callout insight">
+      <div class="callout-label">Key Insight: Why Q-Functions Overestimate</div>
+      <p>When we compute $\max_a Q_\phi(s', a)$ to form the TD target, noise in $Q_\phi$ causes us to preferentially select actions whose Q-values are <em>overestimated</em>. This bias compounds over many Bellman backups, leading to wildly inflated Q-values and poor policies. Taking the minimum of two independent estimates provides a pessimistic correction that largely eliminates this problem.</p>
+    </div>
+
+    <h3 id="td3-trick2">Trick 2: Delayed Policy Updates</h3>
+    <p>
+      TD3 updates the actor (and target networks) <strong>less frequently</strong> than the critic&mdash;typically once every $d = 2$ critic updates. The rationale is that the actor should only be updated when the critic is sufficiently accurate. Updating the actor with noisy Q-estimates wastes gradient steps and can destabilise training.
+    </p>
+
+    <h3 id="td3-trick3">Trick 3: Target Policy Smoothing</h3>
+    <p>
+      When computing the target value, TD3 adds <strong>clipped noise</strong> to the target action:
+    </p>
+    $$\tilde{a}' = \mu_{\theta'}(s') + \text{clip}(\epsilon, -c, c), \quad \epsilon \sim \mathcal{N}(0, \sigma^2).$$
+    <p>
+      This acts as a regulariser: by smoothing the Q-function over nearby actions, it prevents the policy from exploiting narrow peaks in the Q-estimate that may be artifacts of function approximation error.
+    </p>
+
+    <div class="algorithm">
+      <div class="algorithm-title">TD3 (Summary of Modifications to DDPG)</div>
+      <ol>
+        <li>Use two critics $Q_{\phi_1}, Q_{\phi_2}$; compute targets with $\min(Q_{\phi_1'}, Q_{\phi_2'})$.</li>
+        <li>Update actor and target networks every $d$ critic updates (typically $d = 2$).</li>
+        <li>Add clipped Gaussian noise to target actions for smoothing.</li>
+      </ol>
+    </div>
+
+    <h2 id="maximum-entropy-rl">Maximum Entropy Reinforcement Learning</h2>
+    <p>
+      Before introducing SAC, we need the <strong>maximum entropy RL</strong> framework (Ziebart, 2010; Haarnoja et al., 2018). Instead of maximising the standard return, we augment the objective with an <strong>entropy bonus</strong>:
+    </p>
+    $$J_{\text{MaxEnt}}(\pi) = \sum_{t=0}^{\infty} \gamma^t\, \E_{(s_t, a_t) \sim \pi}\!\left[r(s_t, a_t) + \alpha\, \mathcal{H}\!\bigl(\pi(\cdot \mid s_t)\bigr)\right],$$
+    <p>
+      where $\mathcal{H}(\pi(\cdot \mid s)) = -\E_{a \sim \pi}[\log \pi(a \mid s)]$ is the entropy of the policy and $\alpha > 0$ is the <strong>temperature</strong> parameter controlling the trade-off between reward maximisation and entropy maximisation.
+    </p>
+
+    <div class="callout definition">
+      <div class="callout-label">Definition: Soft Value Functions</div>
+      <p>Under the maximum entropy objective, the Bellman equations become "soft":</p>
+      $$\Qpi_{\text{soft}}(s, a) = r(s, a) + \gamma\, \E_{s'}\!\left[\Vpi_{\text{soft}}(s')\right],$$
+      $$\Vpi_{\text{soft}}(s) = \E_{a \sim \pi}\!\left[\Qpi_{\text{soft}}(s, a) - \alpha \log \pi(a \mid s)\right].$$
+      <p>The optimal policy under this framework is the <strong>Boltzmann policy</strong>: $\pi^*(a \mid s) \propto \exp\!\bigl(\frac{1}{\alpha} \Qstar_{\text{soft}}(s, a)\bigr)$.</p>
+    </div>
+
+    <div class="callout insight">
+      <div class="callout-label">Key Insight: Benefits of Entropy Regularisation</div>
+      <p>Adding entropy to the objective has several practical benefits:</p>
+      <ul>
+        <li><strong>Exploration:</strong> The policy is incentivised to maintain stochasticity, preventing premature convergence to suboptimal deterministic strategies.</li>
+        <li><strong>Robustness:</strong> Entropy-regularised policies are more robust to model misspecification and perturbations.</li>
+        <li><strong>Multi-modality:</strong> When multiple strategies achieve similar returns, the entropy bonus encourages the policy to cover all of them rather than arbitrarily committing to one.</li>
+        <li><strong>Smoother optimisation:</strong> The entropy term makes the objective more concave, improving the optimisation landscape.</li>
+      </ul>
+    </div>
+
+    <h2 id="sac">Soft Actor-Critic (SAC)</h2>
+    <p>
+      <strong>SAC</strong> (Haarnoja et al., 2018) is the leading off-policy actor-critic algorithm for continuous control. It combines maximum entropy RL with the twin-Q-network idea from TD3.
+    </p>
+
+    <h3 id="sac-critic">Critic Update</h3>
+    <p>
+      SAC trains two Q-networks $Q_{\phi_1}$ and $Q_{\phi_2}$ to minimise the soft Bellman error. The target is
+    </p>
+    $$y = r + \gamma\!\left(\min_{i=1,2} Q_{\phi_i'}(s', a') - \alpha \log \pi_\theta(a' \mid s')\right), \quad a' \sim \pi_\theta(\cdot \mid s').$$
+    <p>
+      Note that the next action $a'$ is sampled from the <em>current</em> policy $\pi_\theta$, not a target policy, and the entropy term $-\alpha \log \pi_\theta(a' \mid s')$ appears in the target to account for the maximum entropy objective.
+    </p>
+
+    <h3 id="reparameterization-trick">The Reparameterization Trick</h3>
+    <p>
+      To update the actor, SAC uses the <strong>reparameterization trick</strong> rather than the log-probability policy gradient. The idea is to express the stochastic action as a deterministic function of the state and an independent noise variable:
+    </p>
+    $$a = f_\theta(\epsilon;\, s), \quad \epsilon \sim \mathcal{N}(0, I).$$
+    <p>
+      Concretely, with a Gaussian policy, $f_\theta(\epsilon; s) = \mu_\theta(s) + \sigma_\theta(s) \odot \epsilon$, where $\mu_\theta$ and $\sigma_\theta$ are the mean and standard deviation output by the policy network. This allows us to backpropagate through the action into the policy parameters via the chain rule.
+    </p>
+
+    <div class="callout theorem">
+      <div class="callout-label">Theorem: Reparameterized Policy Gradient</div>
+      <p>The SAC actor objective is</p>
+      $$J_\pi(\theta) = \E_{s \sim \mathcal{D}}\!\left[\E_{\epsilon \sim \mathcal{N}}\!\left[\alpha \log \pi_\theta(f_\theta(\epsilon; s) \mid s) - \min_{i=1,2} Q_{\phi_i}(s, f_\theta(\epsilon; s))\right]\right].$$
+      <p>The gradient with respect to $\theta$ flows through both the log-probability term and the Q-function via the action $f_\theta(\epsilon; s)$, yielding a low-variance gradient estimate.</p>
+    </div>
+
+    <details>
+      <summary>Why reparameterization gives lower variance than log-probability gradients</summary>
+      <p>The standard policy gradient $\nabla_\theta \log \pi_\theta(a \mid s) \cdot Q(s,a)$ treats the action as a <em>sample</em> and uses the score function to "guess" how changing $\theta$ would change the probability of that sample. This is fundamentally a zero-order (black-box) approach to the action dependence.</p>
+      <p>The reparameterization trick, by contrast, allows the gradient to flow <em>through</em> the action: $\nabla_\theta Q(s, f_\theta(\epsilon; s))$ uses the first-order structure of $Q$ with respect to $a$ and of $f_\theta$ with respect to $\theta$. This is analogous to the difference between finite-difference and analytic gradients&mdash;the latter has far lower variance. Empirically, reparameterized gradients can be 10&ndash;100x lower variance than score-function gradients.</p>
+    </details>
+
+    <h3 id="squashed-gaussian">Squashed Gaussian Policy</h3>
+    <p>
+      Since many environments have bounded action spaces (e.g., torques in $[-1, 1]$), SAC applies a <strong>tanh squashing</strong> to the Gaussian output:
+    </p>
+    $$a = \tanh(\mu_\theta(s) + \sigma_\theta(s) \odot \epsilon).$$
+    <p>
+      The log-probability under this transformation requires a change-of-variables correction:
+    </p>
+    $$\log \pi_\theta(a \mid s) = \log \mathcal{N}(u;\, \mu_\theta, \sigma_\theta) - \sum_{i=1}^{d} \log(1 - a_i^2),$$
+    <p>
+      where $u = \text{atanh}(a)$ is the pre-squashing action and $d$ is the action dimension.
+    </p>
+
+    <h3 id="automatic-temperature">Automatic Temperature Tuning</h3>
+    <p>
+      The temperature $\alpha$ is crucial: too high and the policy is too random; too low and it collapses to a deterministic mode. SAC automates the choice of $\alpha$ by framing it as a constrained optimisation problem:
+    </p>
+    $$\min_\alpha\; \E_{a \sim \pi_\theta}\!\left[-\alpha \log \pi_\theta(a \mid s) - \alpha\, \bar{\mathcal{H}}\right],$$
+    <p>
+      where $\bar{\mathcal{H}}$ is a target entropy (commonly set to $-\dim(\mathcal{A})$). This adjusts $\alpha$ so that the policy's entropy stays close to the target: if entropy is too low, $\alpha$ increases to encourage more exploration; if entropy is too high, $\alpha$ decreases.
+    </p>
+
+    <div class="algorithm">
+      <div class="algorithm-title">Soft Actor-Critic (SAC)</div>
+      <ol>
+        <li>Initialise policy $\pi_\theta$, two critics $Q_{\phi_1}, Q_{\phi_2}$, target critics $Q_{\phi_1'}, Q_{\phi_2'}$, temperature $\alpha$.</li>
+        <li>Initialise replay buffer $\mathcal{D}$.</li>
+        <li><strong>For each environment step:</strong>
+          <ol>
+            <li>Sample $a \sim \pi_\theta(\cdot \mid s)$ and execute; store $(s, a, r, s')$ in $\mathcal{D}$.</li>
+            <li>Sample mini-batch from $\mathcal{D}$.</li>
+            <li><strong>Critic update:</strong> Minimise $\frac{1}{|\mathcal{B}|}\sum(Q_{\phi_i}(s,a) - y)^2$ for $i=1,2$, where $y = r + \gamma(\min_i Q_{\phi_i'}(s', a') - \alpha \log \pi_\theta(a' \mid s'))$ and $a' \sim \pi_\theta(\cdot \mid s')$.</li>
+            <li><strong>Actor update:</strong> Minimise $\E_{\epsilon}\!\left[\alpha \log \pi_\theta(a_\theta \mid s) - \min_i Q_{\phi_i}(s, a_\theta)\right]$ where $a_\theta = f_\theta(\epsilon; s)$.</li>
+            <li><strong>Temperature update:</strong> $\alpha \leftarrow \alpha - \beta \nabla_\alpha \E[-\alpha \log \pi_\theta(a \mid s) - \alpha \bar{\mathcal{H}}]$.</li>
+            <li><strong>Target update:</strong> $\phi_i' \leftarrow \tau \phi_i + (1-\tau)\phi_i'$ for $i=1,2$.</li>
+          </ol>
+        </li>
+      </ol>
+    </div>
+
+    <h2 id="algorithm-comparison">Comparing Off-Policy Actor-Critic Algorithms</h2>
+    <p>
+      Let us summarise the key differences among DDPG, TD3, and SAC:
+    </p>
+
+    <div class="callout example">
+      <div class="callout-label">Example: Algorithm Comparison</div>
+      <table style="width:100%; border-collapse:collapse; margin-top:0.5em;">
+        <thead>
+          <tr style="border-bottom:2px solid var(--clr-border,#ccc);">
+            <th style="text-align:left;padding:0.4em 0.6em;">Feature</th>
+            <th style="text-align:center;padding:0.4em 0.6em;">DDPG</th>
+            <th style="text-align:center;padding:0.4em 0.6em;">TD3</th>
+            <th style="text-align:center;padding:0.4em 0.6em;">SAC</th>
+          </tr>
+        </thead>
+        <tbody>
+          <tr style="border-bottom:1px solid var(--clr-border,#eee);">
+            <td style="padding:0.4em 0.6em;">Policy type</td>
+            <td style="text-align:center;padding:0.4em 0.6em;">Deterministic</td>
+            <td style="text-align:center;padding:0.4em 0.6em;">Deterministic</td>
+            <td style="text-align:center;padding:0.4em 0.6em;">Stochastic</td>
+          </tr>
+          <tr style="border-bottom:1px solid var(--clr-border,#eee);">
+            <td style="padding:0.4em 0.6em;">Number of Q-networks</td>
+            <td style="text-align:center;padding:0.4em 0.6em;">1</td>
+            <td style="text-align:center;padding:0.4em 0.6em;">2</td>
+            <td style="text-align:center;padding:0.4em 0.6em;">2</td>
+          </tr>
+          <tr style="border-bottom:1px solid var(--clr-border,#eee);">
+            <td style="padding:0.4em 0.6em;">Exploration</td>
+            <td style="text-align:center;padding:0.4em 0.6em;">Action noise</td>
+            <td style="text-align:center;padding:0.4em 0.6em;">Action noise</td>
+            <td style="text-align:center;padding:0.4em 0.6em;">Entropy bonus</td>
+          </tr>
+          <tr style="border-bottom:1px solid var(--clr-border,#eee);">
+            <td style="padding:0.4em 0.6em;">Actor gradient</td>
+            <td style="text-align:center;padding:0.4em 0.6em;">DPG</td>
+            <td style="text-align:center;padding:0.4em 0.6em;">DPG</td>
+            <td style="text-align:center;padding:0.4em 0.6em;">Reparameterized</td>
+          </tr>
+          <tr>
+            <td style="padding:0.4em 0.6em;">Entropy regularisation</td>
+            <td style="text-align:center;padding:0.4em 0.6em;">No</td>
+            <td style="text-align:center;padding:0.4em 0.6em;">No</td>
+            <td style="text-align:center;padding:0.4em 0.6em;">Yes (auto-tuned $\alpha$)</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <p>
+      In practice, <strong>SAC is the most widely used</strong> off-policy actor-critic algorithm for continuous control. Its automatic entropy tuning removes a sensitive hyperparameter, and the stochastic policy provides built-in exploration. TD3 remains a strong alternative, particularly in settings where deterministic policies are preferred or the entropy bonus is undesirable.
+    </p>
+
+    <h2 id="summary">Summary</h2>
+    <p>
+      This lecture addressed the fundamental limitation of on-policy methods&mdash;sample inefficiency&mdash;and introduced off-policy actor-critic algorithms that reuse data via replay buffers. The key ideas are:
+    </p>
+    <ul>
+      <li><strong>Importance sampling</strong> provides a principled correction for off-policy data but suffers from high variance, motivating alternative approaches.</li>
+      <li><strong>DDPG</strong> uses a deterministic policy gradient, sidestepping importance sampling entirely and enabling off-policy learning from a replay buffer.</li>
+      <li><strong>TD3</strong> stabilises DDPG with three modifications: clipped double Q-learning, delayed policy updates, and target policy smoothing.</li>
+      <li><strong>Maximum entropy RL</strong> augments the reward with an entropy bonus $\alpha \mathcal{H}(\pi)$, encouraging exploration and improving robustness.</li>
+      <li><strong>SAC</strong> combines entropy regularisation with the reparameterization trick and twin Q-networks, achieving state-of-the-art sample efficiency on continuous control benchmarks.</li>
+    </ul>
+    <p>
+      All of the methods in this lecture learn both a policy (actor) and a Q-function (critic). In the next lecture, we will ask: can we <em>dispense with the actor entirely</em> and extract a policy directly from the Q-function? This leads to <strong>Q-learning</strong>&mdash;the foundation of value-based deep RL.
+    </p>
+
   </article>
 
   <nav class="lecture-nav">

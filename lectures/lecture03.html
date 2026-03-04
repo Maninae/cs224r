@@ -46,14 +46,369 @@
       <span class="lecture-tag">Baselines</span>
       <span class="lecture-tag">Variance Reduction</span>
     </div>
-    <a class="lecture-pdf-link" href="../slides/cs224r_2025_lecture3.pdf" target="_blank">
+    <a class="lecture-pdf-link" href="../slides/03_cs224r_policy_gradients_2025.pdf" target="_blank">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
       Original PDF slides
     </a>
   </div>
 
   <article class="lecture-article">
-    <!-- Content will be added in Phase 3 -->
+
+    <!-- Section 1: From Imitation to Online RL -->
+    <h2 id="from-imitation-to-online-rl">From Imitation Learning to Online RL</h2>
+
+    <p>In the previous lecture we saw how <strong>imitation learning</strong> can produce capable policies by mimicking expert demonstrations. Given a dataset $\mathcal{D}$ of state-action pairs from a demonstrator, we minimize a behavioral cloning objective:</p>
+
+    $$\min_\theta \; -\E_{(\mathbf{s},\mathbf{a})\sim\mathcal{D}}\!\bigl[\log \pi_\theta(\mathbf{a}\mid\mathbf{s})\bigr]$$
+
+    <p>This is simple and scalable, but it has a fundamental limitation: the learned policy can never exceed the demonstrator's performance. It learns <em>what</em> to do from examples, but has no mechanism for improvement through practice.</p>
+
+    <p>To go beyond the demonstrator, we need a different paradigm. Rather than copying behavior, we want to <em>discover</em> good behavior through interaction with the environment&mdash;collecting our own experience and using reward signals to improve. This is <strong>online reinforcement learning</strong>.</p>
+
+    <div class="callout definition">
+      <div class="callout-label">Definition</div>
+      <strong>Offline vs. Online Learning.</strong>
+      <ul>
+        <li><strong>Offline:</strong> Learning uses only a fixed, pre-collected dataset. No new data is gathered from the learned policy.</li>
+        <li><strong>Online:</strong> Learning uses new data actively collected by the learned policy as it interacts with the environment.</li>
+      </ul>
+    </div>
+
+    <h3 id="rl-recap">The RL Objective</h3>
+
+    <p>Recall the core quantities of reinforcement learning. A <strong>state</strong> $\mathbf{s}_t$ describes the world at time $t$. An <strong>action</strong> $\mathbf{a}_t$ is the decision taken at time $t$. A <strong>trajectory</strong> $\tau$ is a sequence of states and actions: $\tau = (\mathbf{s}_1, \mathbf{a}_1, \mathbf{s}_2, \mathbf{a}_2, \ldots, \mathbf{s}_T, \mathbf{a}_T)$. The <strong>reward function</strong> $r(\mathbf{s}, \mathbf{a})$ measures how good a state-action pair is. And the <strong>policy</strong> $\pi(\mathbf{a}\mid\mathbf{s})$ is the behavior we want to learn.</p>
+
+    <p>Our goal is to find policy parameters $\theta$ that maximize the expected sum of rewards:</p>
+
+    $$\max_\theta \; \E_{\tau \sim p_\theta(\tau)}\!\left[\sum_{t=1}^{T} r(\mathbf{s}_t, \mathbf{a}_t)\right]$$
+
+    <p>where the trajectory distribution factors as:</p>
+
+    $$p(\mathbf{s}_1, \mathbf{a}_1, \ldots, \mathbf{s}_T, \mathbf{a}_T) = p(\mathbf{s}_1)\prod_{t=1}^{T} \pi_\theta(\mathbf{a}_t \mid \mathbf{s}_t)\, p(\mathbf{s}_{t+1} \mid \mathbf{s}_t, \mathbf{a}_t)$$
+
+    <p>Notice that both the policy $\pi_\theta$ and the environment dynamics $p(\mathbf{s}_{t+1}\mid\mathbf{s}_t,\mathbf{a}_t)$ contribute to the trajectory distribution. We can control only the policy; the dynamics are given by the environment.</p>
+
+    <h3 id="online-rl-loop">The Online RL Loop</h3>
+
+    <p>Online RL follows a simple iterative structure. First, we initialize the policy (randomly, from imitation learning, or using heuristics). Then we repeat:</p>
+
+    <ol>
+      <li><strong>Collect data:</strong> Run the current policy $\pi_\theta$ in the environment to gather a batch of trajectories.</li>
+      <li><strong>Improve the policy:</strong> Use the collected trajectories to update $\theta$ in a direction that increases expected reward.</li>
+    </ol>
+
+    <p>This lecture focuses on the most direct approach to step 2: computing the <strong>gradient</strong> of the RL objective with respect to $\theta$ and taking gradient ascent steps. This family of methods is called <strong>policy gradients</strong>&mdash;our first online RL algorithm.</p>
+
+    <!-- Section 2: Evaluating and Differentiating the RL Objective -->
+    <h2 id="evaluating-the-objective">Evaluating and Differentiating the RL Objective</h2>
+
+    <p>Define the RL objective as:</p>
+
+    $$J(\theta) = \E_{\tau \sim p_\theta(\tau)}\!\left[\sum_{t=1}^{T} r(\mathbf{s}_t, \mathbf{a}_t)\right]$$
+
+    <p>We can evaluate $J(\theta)$ empirically by sampling $N$ trajectories $\{\tau^i\}_{i=1}^N$ from the current policy $\pi_\theta$ and averaging:</p>
+
+    $$J(\theta) \approx \frac{1}{N}\sum_{i=1}^{N}\sum_{t=1}^{T} r(\mathbf{s}_{i,t}, \mathbf{a}_{i,t})$$
+
+    <p>But to <em>improve</em> the policy, we need the gradient $\nabla_\theta J(\theta)$. The challenge is that the expectation is taken over $p_\theta(\tau)$, which itself depends on $\theta$. We cannot simply differentiate through the sampling process. Instead, we use a beautiful algebraic identity.</p>
+
+    <h3 id="log-gradient-trick">The Log-Gradient Trick</h3>
+
+    <p>The key insight comes from rewriting the gradient of a probability in terms of the gradient of its logarithm. For any distribution $p_\theta(\tau)$:</p>
+
+    $$p_\theta(\tau)\,\nabla_\theta \log p_\theta(\tau) = p_\theta(\tau)\,\frac{\nabla_\theta p_\theta(\tau)}{p_\theta(\tau)} = \nabla_\theta p_\theta(\tau)$$
+
+    <p>This identity is sometimes called the <strong>log-derivative trick</strong> or <strong>REINFORCE trick</strong>. It allows us to express the gradient of an expectation under a parameterized distribution as an expectation of the gradient of the log-probability, which we <em>can</em> estimate from samples.</p>
+
+    <div class="callout insight">
+      <div class="callout-label">Key Insight</div>
+      The log-derivative trick converts a gradient that passes <em>through</em> a sampling operation (intractable) into an expectation of a gradient <em>inside</em> the sample (tractable). This is the foundational algebraic step behind all policy gradient methods.
+    </div>
+
+    <!-- Section 3: Deriving the Policy Gradient -->
+    <h2 id="policy-gradient-derivation">Deriving the Policy Gradient Theorem</h2>
+
+    <p>We now carry out the full derivation, starting from the RL objective written as an integral over trajectories and arriving at a form that can be estimated purely from samples of the policy.</p>
+
+    <div class="callout theorem">
+      <div class="callout-label">Theorem</div>
+      <strong>Policy Gradient Theorem.</strong> The gradient of the RL objective $J(\theta) = \E_{\tau \sim p_\theta(\tau)}[r(\tau)]$ with respect to the policy parameters $\theta$ is:
+
+      $$\nabla_\theta J(\theta) = \E_{\tau \sim p_\theta(\tau)}\!\left[\left(\sum_{t=1}^{T} \nabla_\theta \log \pi_\theta(\mathbf{a}_t \mid \mathbf{s}_t)\right)\left(\sum_{t=1}^{T} r(\mathbf{s}_t, \mathbf{a}_t)\right)\right]$$
+    </div>
+
+    <details class="proof">
+      <summary>Proof of the Policy Gradient Theorem</summary>
+      <div class="proof-content">
+        <p><strong>Step 1: Write the objective as an integral.</strong> Let $r(\tau) = \sum_{t=1}^T r(\mathbf{s}_t, \mathbf{a}_t)$ denote the total reward of trajectory $\tau$. Then:</p>
+
+        $$J(\theta) = \E_{\tau \sim p_\theta(\tau)}[r(\tau)] = \int p_\theta(\tau)\, r(\tau)\, d\tau$$
+
+        <p><strong>Step 2: Differentiate under the integral.</strong></p>
+
+        $$\nabla_\theta J(\theta) = \int \nabla_\theta p_\theta(\tau)\, r(\tau)\, d\tau$$
+
+        <p><strong>Step 3: Apply the log-derivative trick.</strong> Since $\nabla_\theta p_\theta(\tau) = p_\theta(\tau)\,\nabla_\theta \log p_\theta(\tau)$:</p>
+
+        $$\nabla_\theta J(\theta) = \int p_\theta(\tau)\,\nabla_\theta \log p_\theta(\tau)\, r(\tau)\, d\tau = \E_{\tau \sim p_\theta(\tau)}\!\bigl[\nabla_\theta \log p_\theta(\tau)\, r(\tau)\bigr]$$
+
+        <p><strong>Step 4: Expand $\log p_\theta(\tau)$.</strong> The trajectory probability factors as:</p>
+
+        $$p_\theta(\tau) = p(\mathbf{s}_1)\prod_{t=1}^{T} \pi_\theta(\mathbf{a}_t \mid \mathbf{s}_t)\, p(\mathbf{s}_{t+1} \mid \mathbf{s}_t, \mathbf{a}_t)$$
+
+        <p>Taking the logarithm:</p>
+
+        $$\log p_\theta(\tau) = \log p(\mathbf{s}_1) + \sum_{t=1}^{T}\bigl[\log \pi_\theta(\mathbf{a}_t \mid \mathbf{s}_t) + \log p(\mathbf{s}_{t+1} \mid \mathbf{s}_t, \mathbf{a}_t)\bigr]$$
+
+        <p><strong>Step 5: Differentiate with respect to $\theta$.</strong> The initial state distribution $p(\mathbf{s}_1)$ and the transition dynamics $p(\mathbf{s}_{t+1}\mid\mathbf{s}_t,\mathbf{a}_t)$ do not depend on $\theta$, so their gradients vanish:</p>
+
+        $$\nabla_\theta \log p_\theta(\tau) = \sum_{t=1}^{T} \nabla_\theta \log \pi_\theta(\mathbf{a}_t \mid \mathbf{s}_t)$$
+
+        <p><strong>Step 6: Substitute back.</strong></p>
+
+        $$\nabla_\theta J(\theta) = \E_{\tau \sim p_\theta(\tau)}\!\left[\left(\sum_{t=1}^{T}\nabla_\theta \log \pi_\theta(\mathbf{a}_t \mid \mathbf{s}_t)\right)\left(\sum_{t=1}^{T} r(\mathbf{s}_t, \mathbf{a}_t)\right)\right] \qquad \blacksquare$$
+      </div>
+    </details>
+
+    <p>A crucial feature of this result is that the gradient does <strong>not require knowledge of the environment dynamics</strong> $p(\mathbf{s}_{t+1}\mid\mathbf{s}_t,\mathbf{a}_t)$. It depends only on the policy $\pi_\theta$ (which we control) and the rewards $r$ (which we observe). This makes the method <strong>model-free</strong>.</p>
+
+    <!-- Section 4: REINFORCE Algorithm -->
+    <h2 id="reinforce">The REINFORCE Algorithm</h2>
+
+    <p>The policy gradient theorem gives us a gradient in expectation. To estimate it in practice, we replace the expectation with a sample average over $N$ trajectories collected from the current policy:</p>
+
+    $$\nabla_\theta J(\theta) \approx \frac{1}{N}\sum_{i=1}^{N}\left(\sum_{t=1}^{T}\nabla_\theta \log \pi_\theta(\mathbf{a}_{i,t} \mid \mathbf{s}_{i,t})\right)\left(\sum_{t=1}^{T} r(\mathbf{s}_{i,t}, \mathbf{a}_{i,t})\right)$$
+
+    <p>Combined with gradient ascent on $\theta$, this gives the <strong>REINFORCE algorithm</strong> (Williams, 1992), also called the <strong>vanilla policy gradient</strong>.</p>
+
+    <div class="algorithm">
+      <div class="algorithm-title">REINFORCE (Vanilla Policy Gradient)</div>
+      <ol>
+        <li><strong>Sample</strong> a batch of $N$ trajectories $\{\tau^i\}_{i=1}^N$ by running $\pi_\theta(\mathbf{a}_t \mid \mathbf{s}_t)$ in the environment.</li>
+        <li><strong>Estimate the gradient:</strong>
+          $$\nabla_\theta J(\theta) \approx \frac{1}{N}\sum_{i=1}^{N}\left(\sum_{t=1}^{T}\nabla_\theta \log \pi_\theta(\mathbf{a}_{i,t} \mid \mathbf{s}_{i,t})\right)\left(\sum_{t=1}^{T} r(\mathbf{s}_{i,t}, \mathbf{a}_{i,t})\right)$$
+        </li>
+        <li><strong>Update parameters:</strong> $\theta \leftarrow \theta + \alpha\,\nabla_\theta J(\theta)$</li>
+        <li>Repeat from step 1.</li>
+      </ol>
+    </div>
+
+    <h3 id="gradient-intuition">Intuition: Reward-Weighted Imitation</h3>
+
+    <p>The policy gradient has a striking structural similarity to the behavioral cloning gradient. Recall that the imitation learning gradient is:</p>
+
+    $$\nabla_\theta J_{\text{BC}}(\theta) \approx \frac{1}{N}\sum_{i=1}^{N}\left(\sum_{t=1}^{T}\nabla_\theta \log \pi_\theta(\mathbf{a}_{i,t}\mid\mathbf{s}_{i,t})\right)$$
+
+    <p>The policy gradient is the same expression, but with each trajectory's log-likelihood gradient <strong>weighted by the total reward</strong> of that trajectory. The core intuition is simple:</p>
+
+    <ul>
+      <li><strong>Increase</strong> the likelihood of actions from trajectories with <strong>high</strong> reward.</li>
+      <li><strong>Decrease</strong> the likelihood of actions from trajectories with <strong>negative</strong> reward.</li>
+    </ul>
+
+    <p>In other words: do more of the good stuff, less of the bad stuff. Policy gradients are a formal mathematical realization of <strong>trial-and-error learning</strong>.</p>
+
+    <div class="callout example">
+      <div class="callout-label">Example</div>
+      <strong>Humanoid Walking.</strong> Consider training a simulated humanoid robot to walk forward, with reward $r(\mathbf{s}, \mathbf{a})$ equal to the robot's forward velocity (which can be negative if the robot moves backward). Suppose the current policy generates five trajectories:
+      <ul>
+        <li>$\tau^1$: falls backwards (negative reward)</li>
+        <li>$\tau^2$: falls forwards (slightly positive reward)</li>
+        <li>$\tau^3$: manages to stand still (zero reward)</li>
+        <li>$\tau^4$: one small step forward, then falls backward (mixed reward)</li>
+        <li>$\tau^5$: one large step backward, then small step forward (negative overall)</li>
+      </ul>
+      The vanilla policy gradient will upweight the actions from $\tau^2$ (falling forward had the highest total reward) and downweight $\tau^1$ and $\tau^5$. Unfortunately, this encourages the policy to fall forward rather than learn to take steps&mdash;the gradient is noisy and high-variance.
+    </div>
+
+    <!-- Section 5: Variance Reduction -->
+    <h2 id="variance-reduction">Variance Reduction: Causality and Baselines</h2>
+
+    <p>The REINFORCE gradient estimator is unbiased but suffers from <strong>high variance</strong>. With a finite batch of trajectories, the gradient estimates can be extremely noisy, leading to slow and unstable learning. Two key techniques reduce this variance without introducing bias: the <strong>causality trick</strong> (reward-to-go) and <strong>baselines</strong>.</p>
+
+    <h3 id="causality-trick">The Causality Trick (Reward-to-Go)</h3>
+
+    <p>In the vanilla policy gradient, the log-probability of each action $\mathbf{a}_t$ is multiplied by the <em>total</em> trajectory reward $\sum_{t'=1}^T r(\mathbf{s}_{t'}, \mathbf{a}_{t'})$. But actions taken at time $t$ cannot influence rewards received at earlier times $t' < t$. Including past rewards in the weight only adds noise.</p>
+
+    <p>We can tighten the estimator by replacing the total reward with the <strong>reward-to-go</strong>&mdash;the sum of <em>future</em> rewards from time $t$ onward:</p>
+
+    $$\nabla_\theta J(\theta) \approx \frac{1}{N}\sum_{i=1}^{N}\sum_{t=1}^{T} \nabla_\theta \log \pi_\theta(\mathbf{a}_{i,t}\mid\mathbf{s}_{i,t})\left(\sum_{t'=t}^{T} r(\mathbf{s}_{i,t'}, \mathbf{a}_{i,t'})\right)$$
+
+    <p>This is still an unbiased estimator of the policy gradient (the extra past-reward terms had zero expected contribution), but it has strictly lower variance because each action is now weighted only by the consequences it can actually affect.</p>
+
+    <div class="callout example">
+      <div class="callout-label">Example</div>
+      <strong>Why Causality Helps.</strong> Consider trajectory $\tau^5$ from the humanoid example: the robot takes one large step backward and then a small step forward. Under the vanilla gradient, the forward step at the end would be downweighted because the <em>total</em> reward is negative (dominated by the large backward step). With the reward-to-go, the forward step is evaluated only on the reward it generated&mdash;a positive signal&mdash;so the gradient correctly reinforces the forward step while discouraging the backward step.
+    </div>
+
+    <h3 id="baselines">Baselines</h3>
+
+    <p>The second source of variance comes from the absolute scale of the rewards. If all trajectories have positive reward (even the bad ones), the gradient will increase the likelihood of <em>all</em> actions&mdash;just more so for the good trajectories. This makes learning slow because the gradient signal does not clearly distinguish above-average from below-average behavior.</p>
+
+    <p>The fix is to subtract a <strong>baseline</strong> $b$ from the reward:</p>
+
+    $$\nabla_\theta J(\theta) = \E_{\tau \sim p_\theta(\tau)}\!\left[\nabla_\theta \log p_\theta(\tau)\,\bigl(r(\tau) - b\bigr)\right]$$
+
+    <p>If $b$ is chosen to be the average reward, then above-average trajectories receive positive weight and below-average trajectories receive negative weight, creating a much clearer learning signal.</p>
+
+    <p>But is this still a valid gradient? We need to verify that subtracting a constant does not introduce bias.</p>
+
+    <div class="callout theorem">
+      <div class="callout-label">Theorem</div>
+      <strong>Unbiasedness of Baselines.</strong> For any constant $b$ that does not depend on $\tau$:
+      $$\E_{\tau \sim p_\theta(\tau)}\!\bigl[\nabla_\theta \log p_\theta(\tau)\cdot b\bigr] = 0$$
+      Therefore subtracting $b$ from the reward does not change the expected gradient.
+    </div>
+
+    <details class="proof">
+      <summary>Proof of unbiasedness</summary>
+      <div class="proof-content">
+        <p>Using the log-derivative trick in reverse:</p>
+
+        $$\E\!\bigl[\nabla_\theta \log p_\theta(\tau)\cdot b\bigr] = \int p_\theta(\tau)\,\nabla_\theta \log p_\theta(\tau)\, b\; d\tau = \int \nabla_\theta p_\theta(\tau)\, b\; d\tau$$
+
+        $$= b\,\nabla_\theta \int p_\theta(\tau)\, d\tau = b\,\nabla_\theta\, 1 = 0$$
+
+        <p>The key step is that $\int p_\theta(\tau)\,d\tau = 1$ for any $\theta$ (the trajectory distribution is always normalized), so the gradient of this constant is zero. $\blacksquare$</p>
+      </div>
+    </details>
+
+    <p>The simplest and most common baseline is the <strong>average reward</strong> across the current batch:</p>
+
+    $$b = \frac{1}{N}\sum_{i=1}^{N} r(\tau^i)$$
+
+    <p>Combining the reward-to-go with a baseline, the improved policy gradient estimator becomes:</p>
+
+    $$\nabla_\theta J(\theta) \approx \frac{1}{N}\sum_{i=1}^{N}\sum_{t=1}^{T}\nabla_\theta \log \pi_\theta(\mathbf{a}_{i,t}\mid\mathbf{s}_{i,t})\left(\left(\sum_{t'=t}^{T} r(\mathbf{s}_{i,t'}, \mathbf{a}_{i,t'})\right) - b\right)$$
+
+    <div class="callout example">
+      <div class="callout-label">Example</div>
+      <strong>Jacket Folding with Baselines.</strong> Consider a robot learning to fold a jacket, with reward $r = 1$ for neatly folded, $r = 0.5$ for folded with wrinkles, and $r = 0$ for not folded. Four trajectories are sampled: $\tau^1$ (does not touch jacket, $r = 0$), $\tau^2$ (folds only sleeves, $r = 0.5$), $\tau^3$ (flattens jacket but does not fold it, $r = 0$), and $\tau^4$ (folds the jacket, $r = 1$). The average reward baseline is $b = 0.375$. Without a baseline, all trajectories with any reward would be reinforced. With the baseline, $\tau^1$ and $\tau^3$ (below average) get negative weights, $\tau^2$ gets a small positive weight, and $\tau^4$ gets the strongest positive weight&mdash;the gradient now clearly encourages folding behavior.
+    </div>
+
+    <div class="callout insight">
+      <div class="callout-label">Key Insight</div>
+      Even with causality and baselines, the policy gradient remains high-variance. It works best with <strong>dense rewards</strong> (reward signal at every time step rather than only at the end) and <strong>large batch sizes</strong> (many trajectories per gradient step). These are fundamental practical considerations for anyone implementing policy gradient methods.
+    </div>
+
+    <!-- Section 6: Practical Implementation -->
+    <h2 id="practical-implementation">Practical Implementation</h2>
+
+    <p>Implementing the policy gradient estimator naively&mdash;computing $\nabla_\theta \log \pi_\theta(\mathbf{a}_{i,t}\mid\mathbf{s}_{i,t})$ individually for every time step of every trajectory&mdash;would require $N \times T$ separate backward passes through the policy network, which is inefficient.</p>
+
+    <h3 id="surrogate-objective">The Surrogate Objective</h3>
+
+    <p>The standard solution is to construct a <strong>surrogate objective</strong> $\tilde{J}(\theta)$ whose gradient with respect to $\theta$ equals the policy gradient, and then use automatic differentiation to compute it in a single backward pass:</p>
+
+    $$\tilde{J}(\theta) = \frac{1}{N}\sum_{i=1}^{N}\left(\sum_{t=1}^{T} \log \pi_\theta(\mathbf{a}_{i,t}\mid\mathbf{s}_{i,t})\right)\left(\left(\sum_{t'=t}^{T} r(\mathbf{s}_{i,t'}, \mathbf{a}_{i,t'})\right) - b\right)$$
+
+    <p>This is a <strong>weighted maximum likelihood</strong> objective: it looks like the behavioral cloning loss, but with each log-probability term weighted by the advantage of that trajectory relative to the baseline. When we call <code>loss.backward()</code> in a deep learning framework, we automatically obtain the policy gradient.</p>
+
+    <h3 id="policy-representations">Policy Representations</h3>
+
+    <p>The $\log \pi_\theta(\mathbf{a}\mid\mathbf{s})$ term takes different forms depending on the action space:</p>
+
+    <ul>
+      <li><strong>Discrete actions:</strong> The policy network outputs logits over actions, and $\log \pi_\theta$ is the <strong>cross-entropy</strong> loss between the predicted distribution and the actions actually taken.</li>
+      <li><strong>Continuous actions:</strong> The policy network outputs the mean (and optionally variance) of a Gaussian distribution, and $\log \pi_\theta$ corresponds to a <strong>squared error</strong> term (from the Gaussian log-likelihood).</li>
+    </ul>
+
+    <!-- Section 7: On-Policy vs. Off-Policy -->
+    <h2 id="on-policy-limitation">The On-Policy Limitation</h2>
+
+    <p>The policy gradient as derived requires trajectories sampled from the <strong>current</strong> policy $\pi_\theta$. After each gradient update $\theta \leftarrow \theta + \alpha\,\nabla_\theta J(\theta)$, the parameters change, and the old trajectories are no longer distributed according to the new policy. This means we must <strong>discard all collected data and resample</strong> after every gradient step.</p>
+
+    <div class="callout definition">
+      <div class="callout-label">Definition</div>
+      <strong>On-policy vs. Off-policy.</strong>
+      <ul>
+        <li><strong>On-policy:</strong> The policy update uses only data collected from the current policy. After each update, data must be recollected.</li>
+        <li><strong>Off-policy:</strong> The policy update can reuse data collected from other (e.g., previous) policies.</li>
+      </ul>
+    </div>
+
+    <p>Vanilla policy gradient (REINFORCE) is an <strong>on-policy</strong> algorithm. This is its most significant practical limitation: collecting trajectories is often the most expensive part of the RL pipeline (especially in robotics or complex simulations), and on-policy methods waste this data by using it for only a single gradient step. This motivates the development of off-policy policy gradients.</p>
+
+    <!-- Section 8: Off-Policy Policy Gradients -->
+    <h2 id="off-policy-gradients">Off-Policy Policy Gradients via Importance Sampling</h2>
+
+    <p>Can we update our policy using data collected from a <em>different</em> policy? <strong>Importance sampling</strong> provides a principled way to do this.</p>
+
+    <h3 id="importance-sampling">Importance Sampling</h3>
+
+    <p>Importance sampling is a general technique for estimating expectations under one distribution using samples from another. If we want to compute $\E_{x \sim p}[f(x)]$ but can only sample from a proposal distribution $q$, we write:</p>
+
+    $$\E_{x \sim p}[f(x)] = \int p(x)\,f(x)\,dx = \int q(x)\,\frac{p(x)}{q(x)}\,f(x)\,dx = \E_{x \sim q}\!\left[\frac{p(x)}{q(x)}\,f(x)\right]$$
+
+    <p>The ratio $\frac{p(x)}{q(x)}$ is called the <strong>importance weight</strong>. This is an unbiased estimator as long as $q(x) > 0$ wherever $p(x) > 0$ (the support condition).</p>
+
+    <h3 id="is-for-trajectories">Importance Sampling for Trajectories</h3>
+
+    <p>To apply importance sampling to the RL objective, suppose we have trajectories from an old policy $\bar{\pi}$ but want to evaluate the objective under our current policy $\pi_\theta$. The importance weight for a trajectory is:</p>
+
+    $$\frac{p_\theta(\tau)}{\bar{p}(\tau)} = \frac{p(\mathbf{s}_1)\prod_{t=1}^T \pi_\theta(\mathbf{a}_t\mid\mathbf{s}_t)\,p(\mathbf{s}_{t+1}\mid\mathbf{s}_t,\mathbf{a}_t)}{p(\mathbf{s}_1)\prod_{t=1}^T \bar{\pi}(\mathbf{a}_t\mid\mathbf{s}_t)\,p(\mathbf{s}_{t+1}\mid\mathbf{s}_t,\mathbf{a}_t)} = \prod_{t=1}^{T}\frac{\pi_\theta(\mathbf{a}_t\mid\mathbf{s}_t)}{\bar{\pi}(\mathbf{a}_t\mid\mathbf{s}_t)}$$
+
+    <p>The initial state distribution and transition dynamics cancel out&mdash;we do not need a model of the environment. The importance weight is simply a product of action-probability ratios.</p>
+
+    <p>This lets us write the off-policy policy gradient. If we want to update parameters $\theta'$ using data from policy $\pi_\theta$:</p>
+
+    $$\nabla_{\theta'} J(\theta') = \E_{\tau \sim p_\theta(\tau)}\!\left[\prod_{t=1}^{T}\frac{\pi_{\theta'}(\mathbf{a}_t\mid\mathbf{s}_t)}{\pi_\theta(\mathbf{a}_t\mid\mathbf{s}_t)}\left(\sum_{t=1}^{T}\nabla_{\theta'}\log \pi_{\theta'}(\mathbf{a}_t\mid\mathbf{s}_t)\right)\left(\left(\sum_{t'=t}^{T} r(\mathbf{s}_{t'}, \mathbf{a}_{t'})\right) - b\right)\right]$$
+
+    <h3 id="is-variance-problem">The Variance Problem with Trajectory Importance Weights</h3>
+
+    <p>There is a serious practical problem: the product $\prod_{t=1}^T \frac{\pi_{\theta'}(\mathbf{a}_t\mid\mathbf{s}_t)}{\pi_\theta(\mathbf{a}_t\mid\mathbf{s}_t)}$ involves $T$ terms multiplied together. For long horizons, this product can become astronomically large or vanishingly small, leading to <strong>extreme variance</strong> in the gradient estimate.</p>
+
+    <p>A common approximation avoids this issue by computing importance weights at the <strong>individual time step</strong> level rather than the trajectory level:</p>
+
+    $$\nabla_{\theta'} J(\theta') \approx \frac{1}{N}\sum_{i=1}^{N}\sum_{t=1}^{T}\frac{\pi_{\theta'}(\mathbf{a}_{i,t}\mid\mathbf{s}_{i,t})}{\pi_\theta(\mathbf{a}_{i,t}\mid\mathbf{s}_{i,t})}\,\nabla_{\theta'}\log \pi_{\theta'}(\mathbf{a}_{i,t}\mid\mathbf{s}_{i,t})\left(\left(\sum_{t'=t}^{T} r(\mathbf{s}_{i,t'}, \mathbf{a}_{i,t'})\right) - b\right)$$
+
+    <p>This per-step importance weight $\frac{\pi_{\theta'}(\mathbf{a}_{i,t}\mid\mathbf{s}_{i,t})}{\pi_\theta(\mathbf{a}_{i,t}\mid\mathbf{s}_{i,t})}$ is a single ratio rather than a product of $T$ ratios, so it is much less likely to explode or vanish. However, this approximation ignores the distribution mismatch over states (only correcting the action distribution), introducing some bias. In practice, when $\theta'$ is close to $\theta$, this approximation works well.</p>
+
+    <div class="callout insight">
+      <div class="callout-label">Key Insight</div>
+      Off-policy policy gradients let us take <strong>multiple gradient steps</strong> on the same batch of data, dramatically improving sample efficiency compared to on-policy REINFORCE. The trade-off is that the gradient estimates become less accurate as $\theta'$ drifts away from the data-collection policy $\theta$.
+    </div>
+
+    <!-- Section 9: KL Constraints and Trust Regions -->
+    <h2 id="kl-constraints">Constraining the Policy Update</h2>
+
+    <p>Off-policy policy gradients allow multiple gradient steps per batch of data, but if the policy changes too much between data-collection rounds, the importance weights become unreliable and the gradient estimate degrades. The data no longer reflects the states the updated policy would visit, and the approximation breaks down.</p>
+
+    <p>A natural solution is to <strong>constrain</strong> how far the policy can change during each update. One common and principled choice is to bound the <strong>KL divergence</strong> between the updated policy and the data-collection policy:</p>
+
+    $$\E_{\mathbf{s} \sim \pi_\theta}\!\bigl[\Dkl\!\bigl(\pi_{\theta'}(\cdot\mid\mathbf{s})\,\|\,\pi_\theta(\cdot\mid\mathbf{s})\bigr)\bigr] \leq \delta$$
+
+    <p>This constraint ensures that $\pi_{\theta'}$ does not deviate too far from $\pi_\theta$ in any single update, keeping the importance weights well-behaved. The threshold $\delta$ controls the trade-off between making large steps (fast progress) and staying close to the data-collection policy (reliable gradients).</p>
+
+    <p>This idea&mdash;constraining the policy change per update while using importance sampling for off-policy corrections&mdash;is the foundation of <strong>trust region</strong> methods such as TRPO (Trust Region Policy Optimization) and the widely-used <strong>PPO</strong> (Proximal Policy Optimization) algorithm, which we will study in a later lecture.</p>
+
+    <div class="callout definition">
+      <div class="callout-label">Definition</div>
+      <strong>KL Divergence.</strong> For two distributions $p$ and $q$ over the same space, the KL divergence is:
+      $$\Dkl(p\,\|\,q) = \E_{x \sim p}\!\left[\log \frac{p(x)}{q(x)}\right]$$
+      It is always non-negative, equals zero if and only if $p = q$, and measures how much $p$ differs from $q$ in an information-theoretic sense. It is not symmetric: $\Dkl(p\|q) \neq \Dkl(q\|p)$ in general.
+    </div>
+
+    <!-- Section 10: Summary and Looking Ahead -->
+    <h2 id="summary">Summary and Looking Ahead</h2>
+
+    <p>This lecture developed the theory and algorithms of policy gradients, our first online RL method. The key ideas form a logical chain:</p>
+
+    <ol>
+      <li><strong>The RL objective</strong> $J(\theta) = \E_{\tau \sim p_\theta(\tau)}[\sum_t r(\mathbf{s}_t, \mathbf{a}_t)]$ asks us to maximize expected cumulative reward over trajectories induced by the parameterized policy.</li>
+      <li><strong>The log-derivative trick</strong> converts the gradient of an expectation under a parameterized distribution into an expectation of a product&mdash;the log-probability gradient times the reward&mdash;that we can estimate from samples.</li>
+      <li><strong>The policy gradient theorem</strong> eliminates the need for a dynamics model: only the policy contributes to the gradient, since the initial state distribution and transition dynamics do not depend on $\theta$.</li>
+      <li><strong>REINFORCE</strong> is the resulting algorithm: sample trajectories, compute reward-weighted log-probability gradients, and take a gradient ascent step.</li>
+      <li><strong>Variance reduction</strong> via the causality trick (reward-to-go) and baselines (e.g., average reward) tightens the gradient estimate without introducing bias.</li>
+      <li><strong>Off-policy corrections</strong> via importance sampling allow reusing data from previous policies, improving sample efficiency at the cost of potential variance from importance weights.</li>
+      <li><strong>KL constraints</strong> prevent the policy from changing too much between data-collection rounds, keeping the off-policy approximation valid.</li>
+    </ol>
+
+    <div class="callout insight">
+      <div class="callout-label">Key Insight</div>
+      Policy gradients formalize the intuition of <strong>trial-and-error learning</strong>: collect experience, identify what worked well, and adjust the policy to do more of the good stuff and less of the bad stuff. Despite their simplicity, policy gradients remain high-variance&mdash;they work best with dense rewards and large batch sizes. The next lecture introduces <strong>actor-critic methods</strong>, which replace the sampled reward-to-go with a learned value function, providing a much lower-variance gradient estimate and forming the basis of practical algorithms like PPO.
+    </div>
+
   </article>
 
   <nav class="lecture-nav">

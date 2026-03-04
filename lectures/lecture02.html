@@ -46,14 +46,367 @@
       <span class="lecture-tag">Distribution Shift</span>
       <span class="lecture-tag">Demonstrations</span>
     </div>
-    <a class="lecture-pdf-link" href="../slides/cs224r_2025_lecture2.pdf" target="_blank">
+    <a class="lecture-pdf-link" href="../slides/02_cs224r_imitation_2025.pdf" target="_blank">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
       Original PDF slides
     </a>
   </div>
 
   <article class="lecture-article">
-    <!-- Content will be added in Phase 3 -->
+
+    <!-- Section 1: What is Imitation Learning? -->
+    <h2 id="what-is-imitation-learning">What Is Imitation Learning?</h2>
+
+    <p>In the previous lecture we introduced the Markov Decision Process and the idea that an agent interacts with an environment by choosing actions according to a policy $\pi$. But where does that policy come from? Reinforcement learning derives it from a reward signal&mdash;a scalar feedback that the agent seeks to maximize. <strong>Imitation learning</strong> takes a fundamentally different approach: instead of defining a reward function, we provide the agent with <em>demonstrations</em> of desired behavior and ask it to mimic the demonstrator.</p>
+
+    <p>The appeal is immediate. Specifying a reward function that captures every nuance of a complex task (drive safely, smoothly, and efficiently) is notoriously difficult. But collecting examples of a skilled human performing the task is often straightforward&mdash;we simply record what they do. Imitation learning converts those recordings into a policy.</p>
+
+    <div class="callout definition">
+      <div class="callout-label">Definition</div>
+      <strong>Imitation Learning.</strong> Given a dataset of expert demonstrations $\mathcal{D} := \{(s_1, a_1, \ldots, s_T)\}$ sampled from an unknown expert policy $\pi_{\text{expert}}$, the goal is to learn a policy $\pi_\theta$ that performs at the level of the expert by mimicking its behavior.
+    </div>
+
+    <p>A canonical example is autonomous driving. A dataset of human drivers provides sensor readings (camera images, LIDAR scans) paired with steering commands (wheel angle, throttle, brake). The imitation learning agent trains on these state-action pairs and, at deployment time, maps new sensor observations to driving actions. No reward function is specified&mdash;the demonstrations <em>implicitly</em> define what good behavior looks like.</p>
+
+    <h3 id="recap-notation">Notation Recap</h3>
+
+    <p>We will use the notation established in Lecture 1 throughout:</p>
+
+    <ul>
+      <li><strong>State</strong> $s_t$ &mdash; the state of the world at time $t$.</li>
+      <li><strong>Observation</strong> $o_t$ &mdash; what the agent observes at time $t$ (equal to $s_t$ in fully-observed settings).</li>
+      <li><strong>Action</strong> $a_t$ &mdash; the decision taken at time $t$.</li>
+      <li><strong>Trajectory</strong> $\tau = (s_1, a_1, s_2, a_2, \ldots, s_T, a_T)$ &mdash; a sequence of states and actions.</li>
+      <li><strong>Policy</strong> $\pi(a_t \mid s_t)$ or $\pi(a_t \mid o_{t-m:t})$ &mdash; the agent's behavior, mapping observations to a distribution over actions. This can be represented using a generative model.</li>
+      <li><strong>Reward function</strong> $r(s, a)$ &mdash; how good a state-action pair is (not used directly in imitation learning).</li>
+    </ul>
+
+    <!-- Section 2: Behavioral Cloning -->
+    <h2 id="behavioral-cloning">Behavioral Cloning: The Simplest Approach</h2>
+
+    <p>The most direct form of imitation learning is <strong>behavioral cloning (BC)</strong>: treat the problem as supervised learning. We have inputs (states) and labels (expert actions), so we can train a neural network to map from one to the other using standard regression or classification losses.</p>
+
+    <h3 id="deterministic-bc">Version 0: Deterministic Policy via Regression</h3>
+
+    <p>The simplest behavioral cloning approach learns a deterministic policy $\hat{a} = \pi_\theta(s)$ by minimizing the mean squared error between the expert's actions and the policy's predictions:</p>
+
+    <div class="algorithm">
+      <div class="algorithm-title">Behavioral Cloning &mdash; Version 0 (Deterministic)</div>
+      <ol>
+        <li><strong>Given:</strong> Demonstrations collected by an expert, $\mathcal{D} := \{(s_1, a_1, \ldots, s_T)\}$.</li>
+        <li><strong>Train:</strong> Minimize the $\ell_2$ regression loss over the dataset:
+          $$\min_\theta \; \frac{1}{|\mathcal{D}|} \sum_{(s,a) \in \mathcal{D}} \|a - \hat{a}\|^2 \quad \text{where } \hat{a} = \pi_\theta(s)$$
+        </li>
+        <li><strong>Deploy:</strong> Execute the learned policy $\pi_\theta$ in the environment.</li>
+      </ol>
+    </div>
+
+    <p>This is precisely standard supervised regression. The neural network takes a state $s$ as input and outputs a predicted action $\hat{a}$. Training proceeds via stochastic gradient descent on the squared error, exactly as one would train a regression model on any tabular dataset. After training, the policy is deployed: the agent observes a state, queries the network, and executes the predicted action.</p>
+
+    <h3 id="multimodal-problem">The Multimodality Problem</h3>
+
+    <p>What goes wrong with $\ell_2$ regression? Consider an autonomous driving scenario where human drivers encounter a situation that admits two reasonable actions&mdash;for example, an obstacle in the road that can be avoided by steering either left or right. If the dataset contains demonstrations of both strategies, the $\ell_2$ loss will learn the <em>mean</em> of the two actions: steering straight ahead, which is precisely the <em>worst</em> thing to do.</p>
+
+    <div class="callout example">
+      <div class="callout-label">Example</div>
+      <strong>Averaging over modes.</strong> Suppose a dataset of driving demonstrations contains two clusters of steering commands for a particular observation: one cluster centered at "merge left" and another centered at "stay straight." The combined data distribution is bimodal. A policy trained with $\ell_2$ regression will predict the mean of these two modes&mdash;a steering command that falls between the two intended behaviors, potentially aiming the car directly at an obstacle. This happens frequently in practice, especially when data is collected from multiple demonstrators who have different strategies.
+    </div>
+
+    <p>The fundamental issue is that $\ell_2$ regression outputs a single point prediction, which is the conditional mean $\E[a \mid s]$. When the true conditional distribution $p(a \mid s)$ is multimodal, this mean can lie in a region of low probability&mdash;an action that no expert would ever take. This problem is not merely theoretical; it arises constantly in real-world imitation learning, particularly when demonstrations are collected from multiple people with different preferences and habits.</p>
+
+    <div class="callout insight">
+      <div class="callout-label">Key Insight</div>
+      The $\ell_2$ regression loss forces the policy to predict the conditional mean of the expert actions. When the expert's action distribution is multimodal (as is common with multiple demonstrators or inherently ambiguous situations), the mean can be a poor&mdash;even dangerous&mdash;action. This motivates learning <em>distributions</em> over actions rather than point predictions.
+    </div>
+
+    <!-- Section 3: Learning Expressive Policy Distributions -->
+    <h2 id="expressive-policies">Learning Expressive Policy Distributions</h2>
+
+    <p>The multimodality problem reveals that we need our policy to represent a <em>distribution</em> over actions, not just a single point. The question becomes: how do we parameterize $\pi_\theta(a \mid s)$ as an expressive distribution using a neural network?</p>
+
+    <h3 id="simple-distributions">Simple Parametric Distributions</h3>
+
+    <p>For <strong>discrete actions</strong> (e.g., button presses in a video game), a neural network can output a categorical distribution directly. The network takes the state $s$ as input and outputs a probability for each action: $p(\text{up}), p(\text{down}), p(\text{left}), \ldots$ This representation is <em>maximally expressive</em>&mdash;it can represent any distribution over the finite action set, including multimodal ones.</p>
+
+    <p>For <strong>continuous actions</strong> (e.g., steering angle, joint torques), a common simple choice is a Gaussian distribution. The neural network outputs a mean $\mu$ and standard deviation $\sigma$, defining $\pi_\theta(a \mid s) = \mathcal{N}(\mu(s), \sigma(s)^2)$. While this is a valid probability distribution, it is <em>unimodal</em>&mdash;it can only represent a single bump. For the driving example above, a single Gaussian cannot capture the bimodal "go left or go right" structure. We need something more expressive.</p>
+
+    <h3 id="generative-models-as-policies">Generative Models as Policies</h3>
+
+    <p>The key insight of modern imitation learning is to borrow tools from <strong>generative modeling</strong>&mdash;the same family of techniques used for image generation and language modeling&mdash;and apply them to policy learning. In generative modeling, we learn complex distributions:</p>
+
+    <ul>
+      <li><strong>Image diffusion models</strong> learn $p(\text{image} \mid \text{text description})$.</li>
+      <li><strong>Autoregressive language models</strong> learn $p(\text{next word} \mid \text{words so far})$.</li>
+    </ul>
+
+    <p>For imitation learning, our goal is analogous: learn $p(\text{action} \mid \text{observations})$. Three prominent families of generative models have been adapted for policy learning:</p>
+
+    <h3 id="mixture-of-gaussians">Mixture of Gaussians</h3>
+
+    <p>A <strong>Gaussian Mixture Model (GMM)</strong> represents the action distribution as a weighted sum of $K$ Gaussian components:</p>
+
+    $$\pi_\theta(a \mid s) = \sum_{k=1}^{K} w_k(s) \; \mathcal{N}\big(a \;\big|\; \mu_k(s),\, \sigma_k(s)^2\big)$$
+
+    <p>The neural network takes $s$ as input and outputs the parameters of all components: means $\mu_1, \ldots, \mu_K$, standard deviations $\sigma_1, \ldots, \sigma_K$, and mixture weights $w_1, \ldots, w_K$ (with $\sum_k w_k = 1$). Each component captures a different mode of the expert's behavior. For the driving example, one component might represent "merge left" and another "stay straight."</p>
+
+    <h3 id="discretize-autoregressive">Discretize + Autoregressive Prediction</h3>
+
+    <p>For high-dimensional continuous action spaces (e.g., a robot arm with many joints), the action vector $a_t \in \R^d$ can be decomposed dimension by dimension. First, each continuous dimension is <strong>discretized</strong> into bins. Then an autoregressive model predicts each dimension conditioned on the previous ones:</p>
+
+    $$\pi_\theta(a_t \mid s_t) = p(a_{t,1} \mid s_t) \cdot p(a_{t,2} \mid \hat{a}_{t,1}, s_t) \cdot p(a_{t,3} \mid \hat{a}_{t,1:2}, s_t) \cdots$$
+
+    <p>Each factor is a categorical distribution over the discretized bins for that dimension. This approach can represent arbitrarily complex distributions over actions because the chain rule decomposition loses no information, and categorical distributions over bins are maximally expressive for each conditional. This is the same principle that makes autoregressive language models so powerful.</p>
+
+    <h3 id="diffusion-policies">Diffusion Policies</h3>
+
+    <p>A <strong>diffusion policy</strong> generates actions by iteratively denoising a sample of Gaussian noise. Starting from pure noise $a_t^{(N)} \sim \mathcal{N}(0, I)$, the model applies $N$ steps of learned denoising, each conditioned on the current state $s_t$:</p>
+
+    $$a_t^{(n-1)} = a_t^{(n)} - \epsilon_\theta(a_t^{(n)}, s_t, n), \quad n = N, N-1, \ldots, 1$$
+
+    <p>where $\epsilon_\theta$ is a neural network trained to predict the noise. At each step, the network takes as input the current noisy action $a_t^{(n)}$, the state $s_t$, and the denoising step index $n$, and outputs a noise estimate. After all $N$ steps, the resulting $a_t^{(0)}$ is the sampled action. Diffusion models can represent highly complex, multimodal distributions and have become a dominant approach in modern robot imitation learning.</p>
+
+    <div class="callout insight">
+      <div class="callout-label">Key Insight</div>
+      <strong>Neural network expressivity is distinct from distribution expressivity.</strong> A large neural network with an $\ell_2$ loss is still constrained to output a unimodal prediction (the conditional mean), no matter how many parameters it has. Expressiveness of the <em>distribution family</em>&mdash;GMM, autoregressive, diffusion&mdash;is what determines whether the policy can capture multimodal behavior. Using a bigger network with the same $\ell_2$ loss does not solve the averaging problem.
+    </div>
+
+    <!-- Section 4: Behavioral Cloning with Expressive Policies -->
+    <h2 id="bc-expressive">Behavioral Cloning with Expressive Policies</h2>
+
+    <p>Armed with expressive policy distributions, we can upgrade behavioral cloning. Instead of minimizing $\ell_2$ loss, we maximize the log-likelihood of the expert's actions under the policy distribution:</p>
+
+    <div class="algorithm">
+      <div class="algorithm-title">Behavioral Cloning &mdash; Version 1 (Expressive Policies)</div>
+      <ol>
+        <li><strong>Given:</strong> Demonstrations collected by an expert, $\mathcal{D} := \{(s_1, a_1, \ldots, s_T)\}$.</li>
+        <li><strong>Train:</strong> Minimize the negative log-likelihood:
+          $$\min_\theta \; -\E_{(s,a) \sim \mathcal{D}}\!\big[\log \pi_\theta(a \mid s)\big]$$
+          using an expressive distribution $\pi_\theta(\cdot \mid s)$ (GMM, autoregressive, or diffusion).
+        </li>
+        <li><strong>Deploy:</strong> Execute the learned policy $\pi_\theta$, sampling actions from the learned distribution.</li>
+      </ol>
+      <p>The training objective maximizes the log probability of the demonstration actions under the policy. This is equivalent to minimizing the KL divergence $D_{\text{KL}}(p_{\text{data}}(a \mid s) \| \pi_\theta(a \mid s))$ averaged over states in the dataset.</p>
+    </div>
+
+    <p>This objective is standard maximum likelihood estimation, the same principle that underlies training language models and image generation models. The key difference from Version 0 is that the policy $\pi_\theta$ is now an expressive distribution that can represent multiple modes, rather than a point prediction that can only capture the mean.</p>
+
+    <h3 id="empirical-evidence">Empirical Evidence: Expressivity Matters</h3>
+
+    <p>Experimental results consistently demonstrate the advantage of expressive policies, particularly with multimodal demonstration data:</p>
+
+    <ul>
+      <li><strong>Simulated transport task</strong> (Chi et al., Diffusion Policy): With single-human demonstrations, both diffusion policies and GMM policies achieve high success rates (around 90% and 85%, respectively). But with multi-human demonstrations&mdash;where different people use different strategies&mdash;diffusion policies maintain roughly 90% success while GMM drops to around 40%.</li>
+      <li><strong>Real shirt-hanging task</strong> (Aloha Unleashed): With multi-human data, diffusion policies achieve around 70% success compared to roughly 20% for an L1-loss baseline.</li>
+    </ul>
+
+    <p>The pattern is clear: when demonstration data comes from a single consistent demonstrator, even simple unimodal policies can work well. But when data is multimodal&mdash;whether from multiple demonstrators or from a single demonstrator facing ambiguous situations&mdash;expressive generative models are essential.</p>
+
+    <h3 id="case-studies">Case Studies in Industry</h3>
+
+    <p>The combination of imitation learning with expressive policies has been adopted across robotics and autonomous driving:</p>
+
+    <ul>
+      <li><strong>Robotics:</strong> Physical Intelligence's $\pi_0$ (diffusion), NVIDIA's GR00T N1 (diffusion), Figure Helix (diffusion), and OpenVLA (discretize + autoregressive) all use imitation learning with expressive generative policies to train robot manipulation and locomotion skills.</li>
+      <li><strong>Autonomous driving:</strong> Waymo's EMMA and Wayve's LINGO-2 both use discretize + autoregressive prediction to learn driving policies from human demonstration data.</li>
+    </ul>
+
+    <div class="callout definition">
+      <div class="callout-label">Definition</div>
+      <strong>Offline vs. Online.</strong> Two key terms that will recur throughout this course:
+      <ul>
+        <li><strong>Offline:</strong> Learning using only a pre-existing dataset, with no new data collected from the learned policy.</li>
+        <li><strong>Online:</strong> Learning using new data collected by executing the learned policy in the environment.</li>
+      </ul>
+      Behavioral cloning is a fully <em>offline</em> algorithm&mdash;it trains solely on the provided demonstrations without ever running the learned policy.
+    </div>
+
+    <p>The advantages of offline behavioral cloning are significant: there is no need for data from the learned policy (which can be unsafe or expensive to collect) and no need to define a reward function. The primary disadvantage is that it may require a very large amount of demonstration data for reliable performance, due to a fundamental problem we address next.</p>
+
+    <!-- Section 5: Compounding Errors and Distribution Shift -->
+    <h2 id="compounding-errors">Compounding Errors and Distribution Shift</h2>
+
+    <p>Even with a perfectly expressive policy class, behavioral cloning faces a fundamental challenge that distinguishes it from standard supervised learning: <strong>compounding errors</strong>. Understanding this phenomenon is essential for appreciating both the limitations of behavioral cloning and the motivation for more sophisticated imitation learning algorithms.</p>
+
+    <h3 id="supervised-vs-sequential">Supervised Learning vs. Sequential Decision Making</h3>
+
+    <p>In standard supervised learning, the inputs $x_1, x_2, x_3, \ldots$ are drawn i.i.d. from some fixed distribution $p(x)$, and the predicted labels $\hat{y}$ have no effect on what the next input will be. Even if the model makes an error on input $x_i$, the next input $x_{i+1}$ is drawn from the same distribution&mdash;errors do not propagate.</p>
+
+    <p>In sequential decision making, the situation is fundamentally different. The predicted action $\hat{a}_t$ directly influences the next state $s_{t+1}$ via the environment's dynamics. If the policy makes even a small error at time $t$, it may end up in a state $s_{t+1}$ that is slightly different from any state the expert visited. At this new state, the policy has less reliable training signal (it may be outside the training distribution), so it is more likely to make another error, leading to a state even further from the expert's experience. Errors cascade: each mistake pushes the agent further from the data distribution, where further mistakes become increasingly likely.</p>
+
+    <div class="callout insight">
+      <div class="callout-label">Key Insight</div>
+      The core problem is <strong>covariate shift</strong>: the distribution of states visited by the learned policy $p_\pi(s)$ differs from the distribution of states visited by the expert $p_{\text{expert}}(s)$. The policy was trained on states from $p_{\text{expert}}(s)$ but is evaluated on states from $p_\pi(s)$. Unlike standard supervised learning, the agent's own predictions influence the distribution of future inputs.
+    </div>
+
+    <h3 id="error-analysis">Theoretical Analysis of Error Compounding</h3>
+
+    <p>To make the compounding error problem precise, suppose the learned policy $\pi_\theta$ makes errors with probability $\epsilon$ at any given time step&mdash;that is, $\pi_\theta$ takes a different action from the expert with probability at most $\epsilon$ on states in the expert's distribution. How does the total error grow over a trajectory of length $T$?</p>
+
+    <p>In standard supervised learning (i.i.d. setting), the expected number of mistakes over $T$ inputs is simply $\epsilon T$&mdash;linear in the horizon. But in the sequential setting, errors compound. At time $t$, the probability of being in a state the expert would not have visited grows with each previous error. A careful analysis (Ross and Bagnell, 2010) shows that the total expected cost of the learned policy can be bounded as:</p>
+
+    $$J(\pi_\theta) \leq J(\pi_{\text{expert}}) + O(\epsilon T^2)$$
+
+    <p>where $J(\pi)$ denotes the expected total cost (negative reward) of policy $\pi$ over a horizon of length $T$. The key term is the <strong>quadratic</strong> dependence on $T$: errors grow as $T^2$, not $T$. For a long horizon&mdash;say, driving for 30 minutes at 10 decisions per second&mdash;this quadratic blowup can make behavioral cloning unacceptably fragile.</p>
+
+    <details class="proof">
+      <summary>Intuition for the $O(\epsilon T^2)$ bound</summary>
+      <div class="proof-content">
+        <p>Consider a trajectory of length $T$. At each time step, the policy either follows the expert's action (with probability $1 - \epsilon$) or deviates (with probability $\epsilon$). After the first deviation, the agent is in an unfamiliar state. From that point on, even if the per-step error rate were still $\epsilon$ on expert states, the agent is no longer on expert states, so the effective error rate could be much higher.</p>
+        <p>A simple counting argument: at time step $t$, the probability that the agent has made <em>at least one</em> mistake in the first $t$ steps is approximately $\epsilon t$ (for small $\epsilon$). Once a mistake has occurred, the agent may incur cost at every subsequent step. So the expected total extra cost is roughly:</p>
+        $$\sum_{t=1}^{T} (\text{prob of first mistake by time } t) \times (\text{cost per step}) \approx \sum_{t=1}^{T} \epsilon t \cdot c = O(\epsilon T^2)$$
+        <p>This is an informal argument; the formal proof by Ross and Bagnell (2010) uses a more sophisticated reduction to the online learning framework.</p>
+      </div>
+    </details>
+
+    <h3 id="practical-implications">Practical Implications</h3>
+
+    <p>The $O(\epsilon T^2)$ bound has two immediate practical consequences:</p>
+
+    <ol>
+      <li><strong>Collect massive amounts of data.</strong> If we can drive $\epsilon$ down to a very small value through extensive demonstrations and powerful function approximation, the quadratic blowup may remain manageable. This is the approach taken by large-scale behavioral cloning systems that train on millions or even billions of demonstration trajectories.</li>
+      <li><strong>Collect corrective data.</strong> Instead of trying to make $\epsilon$ vanishingly small, we can collect data that specifically addresses the distribution shift problem. This is the idea behind DAgger, which we discuss next.</li>
+    </ol>
+
+    <!-- Section 6: DAgger -->
+    <h2 id="dagger">DAgger: Dataset Aggregation</h2>
+
+    <p>The compounding error problem arises because the policy is trained on the expert's state distribution but deployed on its own. <strong>DAgger</strong> (Dataset Aggregation), introduced by Ross, Gordon, and Bagnell (2011), addresses this directly by iteratively collecting expert labels on the states the <em>learned policy</em> actually visits.</p>
+
+    <div class="algorithm">
+      <div class="algorithm-title">DAgger (Dataset Aggregation)</div>
+      <ol>
+        <li><strong>Initialize:</strong> Collect initial demonstrations $\mathcal{D}$ from the expert. Train initial policy $\pi_\theta$ on $\mathcal{D}$.</li>
+        <li><strong>Repeat:</strong>
+          <ol style="list-style-type: lower-alpha;">
+            <li><strong>Roll out</strong> the learned policy $\pi_\theta$ in the environment: $s'_1, \hat{a}_1, s'_2, \hat{a}_2, \ldots, s'_T$.</li>
+            <li><strong>Query the expert</strong> for the correct action at each visited state: $a^* \sim \pi_{\text{expert}}(\cdot \mid s')$.</li>
+            <li><strong>Aggregate</strong> the new labeled data with the existing dataset: $\mathcal{D} \leftarrow \mathcal{D} \cup \{(s', a^*)\}$.</li>
+            <li><strong>Retrain</strong> the policy: $\min_\theta \mathcal{L}(\pi_\theta, \mathcal{D})$.</li>
+          </ol>
+        </li>
+      </ol>
+    </div>
+
+    <p>The crucial insight is step (b): the expert provides labels not for the states <em>it</em> would visit, but for the states <em>the learned policy</em> visits. Over successive iterations, the training distribution converges to the distribution of states the policy actually encounters, eliminating the covariate shift problem. Ross et al. (2011) proved that DAgger achieves a regret bound of $O(\epsilon T)$&mdash;linear in the horizon, matching the standard supervised learning setting and eliminating the $T^2$ blowup.</p>
+
+    <div class="callout insight">
+      <div class="callout-label">Key Insight</div>
+      DAgger converts the sequential prediction problem into a standard supervised learning problem by ensuring the training distribution matches the test distribution. The key requirement is <strong>interactive access to the expert</strong>: we must be able to ask the expert "what would you do in <em>this</em> state?" for arbitrary states, including states the expert would never have reached on its own.
+    </div>
+
+    <p>The advantages of DAgger are clear: it is a data-efficient way to learn from an expert, directly addressing the compounding error problem. However, it has a significant practical limitation: querying the expert for actions at states visited by the learned policy can be challenging. The agent is in control of execution, and the expert must provide labels for potentially unusual or dangerous states that the agent has wandered into. In safety-critical domains like driving, this is problematic&mdash;the human expert must somehow specify the correct action from an awkward or dangerous situation that they would never have entered themselves.</p>
+
+    <!-- Section 7: Human-Gated DAgger -->
+    <h2 id="hg-dagger">Human-Gated DAgger: A Practical Variant</h2>
+
+    <p>A more practical variant of DAgger is <strong>Human-Gated DAgger (HG-DAgger)</strong>, which reverses the control structure. Instead of letting the learned policy execute fully and then querying the expert after the fact, HG-DAgger lets a human supervisor <em>watch</em> the policy execute and <em>intervene</em> whenever they judge the policy is about to make a mistake.</p>
+
+    <div class="algorithm">
+      <div class="algorithm-title">Human-Gated DAgger (HG-DAgger)</div>
+      <ol>
+        <li><strong>Initialize:</strong> Collect initial demonstrations $\mathcal{D}$ from the expert. Train initial policy $\pi_\theta$ on $\mathcal{D}$.</li>
+        <li><strong>Repeat:</strong>
+          <ol style="list-style-type: lower-alpha;">
+            <li><strong>Start rolling out</strong> the learned policy $\pi_\theta$: $s'_1, \hat{a}_1, \ldots, s'_t$.</li>
+            <li>The <strong>expert intervenes</strong> at time $t$ when the policy is about to make a mistake.</li>
+            <li>The expert provides a <strong>(partial) demonstration</strong> from the intervention point: $s'_t, a^*_t, s'_{t+1}, a^*_{t+1}, \ldots, s'_T$.</li>
+            <li><strong>Aggregate</strong> the new demonstrations: $\mathcal{D} \leftarrow \mathcal{D} \cup \{(s'_i, a^*_i)\}$ for $i \geq t$.</li>
+            <li><strong>Retrain</strong> the policy: $\min_\theta \mathcal{L}(\pi_\theta, \mathcal{D})$.</li>
+          </ol>
+        </li>
+      </ol>
+    </div>
+
+    <p>HG-DAgger has a much more practical interface than standard DAgger. The human watches the agent act and takes over when needed&mdash;exactly the paradigm of a driving instructor supervising a student driver. The expert provides full demonstrations from the intervention point onward, which is a natural and comfortable way to provide corrections. The downside is that it can be difficult to catch mistakes quickly in some application domains, especially when errors compound rapidly or the system operates at high speed.</p>
+
+    <div class="callout example">
+      <div class="callout-label">Example</div>
+      <strong>Learning to drive with HG-DAgger.</strong> Consider training an autonomous driving policy. The human supervisor sits in the car while the learned policy drives. When the policy begins to drift toward the edge of the lane, the human takes over the steering wheel and drives correctively for some period. This corrective driving data&mdash;collected precisely in the states where the policy struggles&mdash;is added to the training set. After several rounds of this process, the policy has been exposed to its own failure modes and has learned to correct them.
+    </div>
+
+    <p>An interesting research question, noted on the slides, is whether one could <em>automatically</em> detect when intervention is needed&mdash;for instance, by training an uncertainty estimator that flags states where the policy is likely to fail, triggering expert intervention without requiring constant human supervision.</p>
+
+    <!-- Section 8: Collecting Demonstrations -->
+    <h2 id="collecting-demonstrations">How to Collect Demonstrations</h2>
+
+    <p>The quality and practicality of imitation learning depends critically on how demonstration data is gathered. The challenge varies significantly across domains.</p>
+
+    <h3 id="natural-demonstrations">Naturally Occurring Demonstrations</h3>
+
+    <p>In some domains, people already routinely perform the task being automated, and their behavior can simply be recorded. Autonomous driving is the prime example: billions of miles of human driving data exist in the form of dashcam footage paired with vehicle telemetry (steering angle, speed, braking). Similarly, language models can be trained on the vast corpus of human-written text&mdash;every sentence ever written is a "demonstration" of language generation.</p>
+
+    <h3 id="robotics-demonstrations">Robotics Demonstrations</h3>
+
+    <p>Robotics presents a harder challenge because humans cannot directly "do" what a robot does&mdash;we have different bodies, different sensors, and different actuators. Three common approaches for collecting robot demonstrations are:</p>
+
+    <ul>
+      <li><strong>Kinesthetic teaching:</strong> A human physically moves the robot's joints through the desired motion. This provides an easy, intuitive interface, but the human is visible in the scene (potentially confusing vision-based policies) and it can be physically tiring.</li>
+      <li><strong>Remote controllers (teleoperation):</strong> The human operates the robot through a game controller, joystick, or VR device. Interface ease varies widely; some setups have significant latency between the human's commands and the robot's execution, which degrades demonstration quality.</li>
+      <li><strong>Puppeteering:</strong> A matching "leader" robot is manipulated by the human, and the "follower" robot mirrors the motions. This provides an intuitive interface with low latency, but requires building two copies of the robot hardware.</li>
+    </ul>
+
+    <h3 id="embodiment-gap">The Embodiment Gap</h3>
+
+    <p>Could we avoid specialized data collection entirely by having robots learn from videos of humans or animals? This is an attractive idea&mdash;internet video data is plentiful and covers an enormous range of behaviors. However, the <strong>embodiment gap</strong> presents a fundamental obstacle:</p>
+
+    <ul>
+      <li><strong>Appearance difference:</strong> A robot arm looks nothing like a human arm, so mapping visual observations across embodiments is non-trivial.</li>
+      <li><strong>Capability difference:</strong> Robots and humans have different degrees of freedom, joint limits, strength profiles, and dynamics. A motion that is natural for a human may be impossible for a given robot.</li>
+    </ul>
+
+    <p>While it is hard to directly imitate human or animal demonstrations across the embodiment gap, such data can potentially guide exploration in reinforcement learning. For example, Peng et al. (SFV, SIGGRAPH Asia 2018) used video of humans performing athletic movements to define reward functions for training simulated characters, achieving impressive backflips and other acrobatic skills.</p>
+
+    <!-- Section 9: Theoretical Perspective -->
+    <h2 id="theoretical-perspective">Theoretical Perspective: When Does Imitation Learning Work?</h2>
+
+    <p>Let us consolidate the theoretical picture of when imitation learning succeeds and when it fails.</p>
+
+    <h3 id="bc-guarantees">Behavioral Cloning Guarantees</h3>
+
+    <p>Behavioral cloning treats imitation learning as an i.i.d. supervised learning problem. If the policy achieves expected per-step loss $\epsilon$ on the expert's state distribution, the performance guarantee is:</p>
+
+    $$J(\pi_\theta) \leq J(\pi_{\text{expert}}) + O(\epsilon T^2)$$
+
+    <p>This quadratic dependence on horizon $T$ means that even small per-step errors can accumulate to produce catastrophic failure over long episodes. To achieve a total error of at most $\delta$, we need per-step error $\epsilon \leq O(\delta / T^2)$, which may require an impractically large number of demonstrations.</p>
+
+    <h3 id="dagger-guarantees">DAgger Guarantees</h3>
+
+    <p>DAgger, by training on the policy's own state distribution, achieves a much stronger guarantee:</p>
+
+    $$J(\pi_\theta) \leq J(\pi_{\text{expert}}) + O(\epsilon T)$$
+
+    <p>The linear dependence on $T$ matches the i.i.d. supervised learning rate. To achieve total error at most $\delta$, we need only $\epsilon \leq O(\delta / T)$, which is dramatically more lenient than the $O(\delta / T^2)$ requirement of behavioral cloning. The cost is that DAgger requires interactive access to the expert during training.</p>
+
+    <div class="callout theorem">
+      <div class="callout-label">Theorem</div>
+      <strong>DAgger Regret Bound (Ross, Gordon, and Bagnell 2011).</strong> Under suitable regularity conditions, after $N$ rounds of DAgger, the best policy in the sequence achieves expected total cost at most:
+      $$J(\pi_{\hat{\theta}}) \leq J(\pi_{\text{expert}}) + O\!\left(\frac{T}{\sqrt{N}}\right) + O(\epsilon_{\text{approx}} \cdot T)$$
+      where $\epsilon_{\text{approx}}$ is the approximation error of the policy class and $N$ is the number of DAgger iterations. As $N \to \infty$, the regret approaches $O(\epsilon_{\text{approx}} \cdot T)$&mdash;linear in the horizon.
+    </div>
+
+    <!-- Section 10: Summary and Looking Ahead -->
+    <h2 id="summary">Summary and Looking Ahead</h2>
+
+    <p>This lecture covered the two main paradigms of imitation learning, along with the critical issues that arise in practice:</p>
+
+    <p><strong>Part 1: Offline Behavioral Cloning.</strong> Train a policy to mimic expert demonstrations using supervised learning. The key design choice is the policy's distribution family: simple regression produces the conditional mean (problematic for multimodal data), while expressive generative models&mdash;mixtures of Gaussians, autoregressive models, diffusion models&mdash;can capture the full distribution of expert behavior. The algorithm is fully offline, requiring no interaction with the environment. Its main weakness is susceptibility to compounding errors ($O(\epsilon T^2)$ cost growth) due to distribution shift between expert states and policy states.</p>
+
+    <p><strong>Part 2: Online Imitation with DAgger.</strong> Address compounding errors by iteratively collecting expert labels on states the learned policy visits. DAgger achieves linear error growth ($O(\epsilon T)$), matching the i.i.d. supervised learning rate. Human-Gated DAgger provides a more practical variant where a human supervisor intervenes when the policy errs. The cost is the requirement for interactive expert access during training.</p>
+
+    <p>The strengths and limitations of imitation learning can be summarized as:</p>
+
+    <ul>
+      <li><strong>Strengths:</strong> No need to define a reward function; offline BC requires no online data (which can be unsafe or expensive); DAgger provides a data-efficient path to reliable performance.</li>
+      <li><strong>Limitations:</strong> May need impractically large amounts of data; does not provide a framework for the agent to improve on its own through practice; performance is bounded by the quality of the expert.</li>
+    </ul>
+
+    <div class="callout insight">
+      <div class="callout-label">Key Insight</div>
+      Imitation learning is powerful but inherently limited: it can at best match the expert, never surpass it. For tasks where we want the agent to discover better-than-human strategies, or where we want the agent to improve autonomously through trial and error, we need <strong>reinforcement learning</strong>. In practice, many successful systems combine imitation learning (to bootstrap a reasonable initial policy) with reinforcement learning (to refine and improve beyond the demonstrations). This is the direction the course takes next.
+    </div>
+
+    <p>In the next lecture, we begin our study of reinforcement learning algorithms, starting with policy gradient methods&mdash;techniques for directly optimizing a policy using reward signals from the environment, without any expert demonstrations.</p>
+
   </article>
 
   <nav class="lecture-nav">

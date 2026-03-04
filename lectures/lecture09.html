@@ -46,14 +46,282 @@
       <span class="lecture-tag">LLM Alignment</span>
       <span class="lecture-tag">Guest Lecture</span>
     </div>
-    <a class="lecture-pdf-link" href="../slides/cs224r_2025_lecture9.pdf" target="_blank">
+    <a class="lecture-pdf-link" href="../slides/09_cs224r-2025-rlhf.pdf" target="_blank">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
       Original PDF slides
     </a>
   </div>
 
   <article class="lecture-article">
-    <!-- Content will be added in Phase 3 -->
+
+    <!-- Section 1: From Language Models to Assistants -->
+    <h2 id="from-lms-to-assistants">From Language Models to Assistants</h2>
+
+    <p>Large language models are trained to predict the next token in a sequence. This objective produces models with remarkable breadth of knowledge&mdash;they absorb trivia, syntax, coreference patterns, sentiment, and even rudimentary reasoning from the vast text corpora they consume. Yet next-token prediction alone does not produce a helpful assistant. A model trained purely on web text will happily continue any prompt, but it has no notion of what a user actually <em>wants</em>.</p>
+
+    <p>The gap between "predict the next token" and "be a useful assistant" is substantial. Bridging it requires a sequence of interventions: first, <strong>instruction finetuning</strong> teaches the model to follow directions; then, <strong>preference optimization</strong> (via RLHF or DPO) aligns its outputs with human judgments of quality. This lecture focuses on the second stage&mdash;the techniques that transform a capable but unaligned model into one whose responses humans actually prefer.</p>
+
+    <h3 id="what-pretraining-learns">What Pretraining Learns</h3>
+
+    <p>Pretraining on next-token prediction yields a model that captures diverse linguistic and world knowledge. Given "Stanford University is located in __________, California," a pretrained model fills in "Stanford" without hesitation. It handles syntax ("I put ___ fork down" &rarr; "my"), coreference ("The woman walked across the street, checking for traffic over ___ shoulder" &rarr; "her"), and lexical semantics ("fish, turtles, seals, and ___" &rarr; "whales"). It can even perform simple sentiment analysis and basic arithmetic, though more complex reasoning remains fragile.</p>
+
+    <p>Language models also function as rudimentary world models. They can serve as agents (generating actions in interactive environments), solve math problems (Khan Academy-style), write code (GitHub Copilot), and provide medical information. The common thread is that pretraining captures patterns in how the world works&mdash;but only insofar as those patterns are reflected in text.</p>
+
+    <div class="callout insight">
+      <div class="callout-label">Key Insight</div>
+      Pretraining captures <em>what the world looks like</em> (knowledge, syntax, patterns), but not <em>what a user wants</em>. Alignment techniques bridge this gap by optimizing for human preferences rather than next-token likelihood.
+    </div>
+
+    <!-- Section 2: Instruction Finetuning -->
+    <h2 id="instruction-finetuning">Instruction Finetuning</h2>
+
+    <p>The first step toward building an assistant is <strong>instruction finetuning</strong>&mdash;training the model on (instruction, output) pairs across many tasks. The idea is straightforward: collect examples of desired behavior, then maximize the likelihood of the correct output conditioned on the instruction. This is the same supervised learning objective used in pretraining, but now the data consists of explicit task demonstrations rather than raw text.</p>
+
+    <p>FLAN-T5 (Chung et al., 2022) demonstrated the power of this approach at scale: T5 encoder-decoder models finetuned on 1,800 additional tasks showed dramatic improvements on held-out benchmarks like BIG-bench and MMLU. The gains were especially pronounced for larger models&mdash;bigger models benefited more from instruction finetuning, suggesting that the base model's capacity determines how much alignment signal it can absorb.</p>
+
+    <h3 id="limitations-of-ift">Limitations of Instruction Finetuning</h3>
+
+    <p>Despite its effectiveness, instruction finetuning has three important limitations:</p>
+
+    <ul>
+      <li><strong>No right answer for open-ended tasks.</strong> For creative writing, open-ended dialogue, or stylistic preferences, there is no single ground-truth output. "Write me a story about a dog and her pet grasshopper" has infinitely many good completions, and standard supervised learning cannot express which ones are <em>better</em> than others.</li>
+      <li><strong>Equal penalty for all errors.</strong> Language modeling penalizes every incorrect token equally, but some mistakes are far more consequential than others. Getting a factual claim wrong is much worse than choosing a slightly different synonym.</li>
+      <li><strong>Suboptimal human demonstrations.</strong> Humans generate imperfect answers. Even the best annotators produce responses that could be improved, and the model learns to imitate these imperfections faithfully.</li>
+    </ul>
+
+    <p>The core issue is a mismatch between the language modeling objective (maximize token-level likelihood) and the true goal (satisfy human preferences). We need an optimization target that directly captures what humans prefer.</p>
+
+    <!-- Section 3: The RLHF Pipeline -->
+    <h2 id="rlhf-pipeline">The RLHF Pipeline</h2>
+
+    <p>Reinforcement Learning from Human Feedback (RLHF) addresses this mismatch head-on. Instead of maximizing likelihood against a fixed target, we optimize the model to produce outputs that receive high reward according to a learned model of human preferences. The full pipeline consists of three stages.</p>
+
+    <div class="callout definition">
+      <div class="callout-label">Definition</div>
+      <strong>RLHF Pipeline.</strong> The three-stage process for aligning language models with human preferences:
+      <ol>
+        <li><strong>Supervised Finetuning (SFT):</strong> Instruction-finetune the pretrained model on high-quality demonstrations.</li>
+        <li><strong>Reward Model Training:</strong> Collect pairwise human comparisons of model outputs and train a reward model $RM_\phi(x, y)$ to predict which response humans prefer.</li>
+        <li><strong>RL Optimization:</strong> Use policy gradient methods to optimize the language model to maximize the predicted reward, subject to a KL constraint against the SFT model.</li>
+      </ol>
+    </div>
+
+    <h3 id="reward-signal">Defining the Reward Signal</h3>
+
+    <p>Suppose we have an instruction $x$ and a model-generated response $y$. We want a scalar reward $R(x, y) \in \R$ indicating how good the response is&mdash;higher is better. If we had access to reliable human ratings, we could directly maximize:</p>
+
+    $$\E_{\hat{y} \sim p_\theta(\cdot \mid x)}\!\left[R(x, \hat{y})\right]$$
+
+    <p>But obtaining direct human reward scores for every model output is prohibitively expensive. Even if we could, human ratings are noisy and poorly calibrated&mdash;different annotators assign wildly different absolute scores to the same response.</p>
+
+    <h3 id="pairwise-comparisons">Pairwise Comparisons and the Bradley-Terry Model</h3>
+
+    <p>The solution is to collect <em>pairwise comparisons</em> rather than absolute ratings. Given two responses $y_w$ (preferred, or "winning") and $y_l$ (dispreferred, or "losing") to the same prompt $x$, a human annotator simply indicates which is better. Comparisons are more reliable than absolute scores because they bypass calibration issues.</p>
+
+    <p>To train a reward model from comparison data, we use the <strong>Bradley-Terry paired comparison model</strong> (Bradley and Terry, 1952). Under this model, the probability that response $y_w$ is preferred over $y_l$ is:</p>
+
+    $$P(y_w \succ y_l \mid x) = \sigma\!\left(RM_\phi(x, y_w) - RM_\phi(x, y_l)\right)$$
+
+    <p>where $\sigma$ is the logistic sigmoid function. The reward model $RM_\phi(x, y)$ is typically a transformer that takes the prompt-response pair as input and produces a scalar score. We train it by minimizing the negative log-likelihood of the observed preferences:</p>
+
+    $$J_{RM}(\phi) = -\E_{(x, y_w, y_l) \sim \mathcal{D}}\!\left[\log \sigma\!\left(RM_\phi(x, y_w) - RM_\phi(x, y_l)\right)\right]$$
+
+    <div class="callout insight">
+      <div class="callout-label">Key Insight</div>
+      The Bradley-Terry model only depends on the <em>difference</em> in rewards between two responses, not their absolute values. This is why pairwise comparisons suffice&mdash;we never need to pin down the absolute scale of human preferences.
+    </div>
+
+    <!-- Section 4: KL-Constrained Optimization -->
+    <h2 id="kl-constrained-optimization">KL-Constrained Policy Optimization</h2>
+
+    <p>With a trained reward model $RM_\phi$ in hand, we now want to optimize the language model's parameters $\theta$ to maximize the predicted reward. A naive approach would be to simply maximize $\E_{\hat{y} \sim p_\theta^{RL}(\cdot \mid x)}[RM_\phi(x, \hat{y})]$, but this leads to <strong>reward hacking</strong>&mdash;the model finds degenerate outputs that score highly under the (imperfect) reward model while being clearly bad by human standards.</p>
+
+    <p>The standard remedy is to add a KL divergence penalty that prevents the policy from straying too far from the pretrained or SFT model $p^{PT}$:</p>
+
+    $$\max_\theta \; \E_{\hat{y} \sim p_\theta^{RL}(\cdot \mid x)}\!\left[RM_\phi(x, \hat{y}) - \beta \log \frac{p_\theta^{RL}(\hat{y} \mid x)}{p^{PT}(\hat{y} \mid x)}\right]$$
+
+    <p>The penalty term $\beta \log \frac{p_\theta^{RL}(\hat{y} \mid x)}{p^{PT}(\hat{y} \mid x)}$ charges a price whenever the RL policy assigns substantially more probability to a response than the pretrained model does. In expectation over $\hat{y}$, this penalty is exactly $\beta \cdot \Dkl\!\left(p_\theta^{RL}(\cdot \mid x) \,\|\, p^{PT}(\cdot \mid x)\right)$, the KL divergence from the pretrained model to the RL policy.</p>
+
+    <div class="callout definition">
+      <div class="callout-label">Definition</div>
+      <strong>KL-Constrained RLHF Objective.</strong> The policy $p_\theta^{RL}$ is optimized to maximize:
+      $$J(\theta) = \E_{x}\!\left[\E_{\hat{y} \sim p_\theta^{RL}(\cdot \mid x)}\!\left[RM_\phi(x, \hat{y})\right] - \beta \, \Dkl\!\left(p_\theta^{RL}(\cdot \mid x) \,\|\, p^{PT}(\cdot \mid x)\right)\right]$$
+      The hyperparameter $\beta > 0$ controls the strength of the constraint. Larger $\beta$ keeps the model closer to $p^{PT}$; smaller $\beta$ allows more aggressive optimization of the reward.
+    </div>
+
+    <h3 id="policy-gradient-recap">Policy Gradient Recap</h3>
+
+    <p>How do we actually optimize this objective? The reward model is generally not differentiable with respect to the discrete text generation process, so we cannot simply backpropagate through it. Instead, we use <strong>policy gradient methods</strong>, specifically the REINFORCE estimator (Williams, 1992).</p>
+
+    <p>The key mathematical tool is the <strong>log-derivative trick</strong>. Starting from the gradient of the expected reward:</p>
+
+    $$\nabla_\theta \E_{\hat{y} \sim p_\theta(\cdot \mid x)}\!\left[R(x, \hat{y})\right] = \nabla_\theta \sum_y R(x, y) \, p_\theta(y \mid x) = \sum_y R(x, y) \, \nabla_\theta \, p_\theta(y \mid x)$$
+
+    <p>We use the identity $\nabla_\theta \, p_\theta(y \mid x) = p_\theta(y \mid x) \, \nabla_\theta \log p_\theta(y \mid x)$ (which follows from the chain rule applied to $\log p_\theta$) to rewrite this as an expectation:</p>
+
+    $$= \E_{\hat{y} \sim p_\theta(\cdot \mid x)}\!\left[R(x, \hat{y}) \, \nabla_\theta \log p_\theta(\hat{y} \mid x)\right]$$
+
+    <p>This can be approximated via Monte Carlo sampling: draw $m$ samples $y_1, \ldots, y_m$ from $p_\theta$ and compute:</p>
+
+    $$\nabla_\theta J(\theta) \approx \frac{1}{m} \sum_{i=1}^{m} R(x, y_i) \, \nabla_\theta \log p_\theta(y_i \mid x)$$
+
+    <p>The intuition is straightforward: if the reward $R(x, y_i)$ is large and positive, take a gradient step that increases $\log p_\theta(y_i \mid x)$&mdash;making this good response more likely. If the reward is negative, decrease its probability. This is why the method is called "reinforcement" learning: good actions are reinforced.</p>
+
+    <div class="callout insight">
+      <div class="callout-label">Key Insight</div>
+      In practice, the REINFORCE estimator has high variance. Production RLHF systems use more sophisticated algorithms like PPO (Proximal Policy Optimization), which adds a value function baseline, trust-region constraints, and clipped objectives to stabilize training. But the core idea&mdash;using sampled rewards to shape the policy gradient&mdash;remains the same.
+    </div>
+
+    <!-- Section 5: DPO Derivation -->
+    <h2 id="dpo-derivation">Direct Preference Optimization (DPO)</h2>
+
+    <p>The RLHF pipeline works, but it is complex. It requires training a separate reward model, running on-policy sampling during RL, fitting a value function for variance reduction, and carefully tuning many hyperparameters. Rafailov et al. (2023) showed that this entire pipeline can be collapsed into a single supervised learning objective by exploiting the closed-form solution to the KL-constrained optimization problem.</p>
+
+    <h3 id="closed-form-solution">Closed-Form Solution to the KL-Constrained Problem</h3>
+
+    <p>Recall the RLHF objective for a fixed prompt $x$:</p>
+
+    $$\max_{p} \; \E_{\hat{y} \sim p(\cdot \mid x)}\!\left[RM(x, \hat{y})\right] - \beta \, \Dkl\!\left(p(\cdot \mid x) \,\|\, p^{PT}(\cdot \mid x)\right)$$
+
+    <p>This is a constrained optimization problem over the distribution $p$. Writing out the KL divergence explicitly and taking the functional derivative with respect to $p(y \mid x)$, one can show that the optimal policy takes the form:</p>
+
+    <div class="callout theorem">
+      <div class="callout-label">Theorem</div>
+      <strong>Optimal Policy for KL-Constrained Reward Maximization.</strong> The optimal policy $p^*(y \mid x)$ that maximizes the KL-constrained objective is:
+      $$p^*(y \mid x) = \frac{1}{Z(x)} \, p^{PT}(y \mid x) \, \exp\!\left(\frac{1}{\beta} \, RM(x, y)\right)$$
+      where $Z(x) = \sum_y p^{PT}(y \mid x) \, \exp\!\left(\frac{1}{\beta} \, RM(x, y)\right)$ is the partition function ensuring normalization.
+    </div>
+
+    <details>
+      <summary>Proof sketch</summary>
+      <p>Write the objective as a functional over distributions:</p>
+      $$J[p] = \sum_y p(y \mid x) \, RM(x, y) - \beta \sum_y p(y \mid x) \log \frac{p(y \mid x)}{p^{PT}(y \mid x)}$$
+      <p>Taking the functional derivative with respect to $p(y \mid x)$ and setting it to zero (with a Lagrange multiplier for the normalization constraint $\sum_y p(y \mid x) = 1$):</p>
+      $$\frac{\partial J}{\partial p(y \mid x)} = RM(x, y) - \beta \log \frac{p(y \mid x)}{p^{PT}(y \mid x)} - \beta - \lambda = 0$$
+      <p>Solving for $p(y \mid x)$:</p>
+      $$\log \frac{p(y \mid x)}{p^{PT}(y \mid x)} = \frac{1}{\beta} RM(x, y) - 1 - \frac{\lambda}{\beta}$$
+      $$p(y \mid x) = p^{PT}(y \mid x) \, \exp\!\left(\frac{1}{\beta} RM(x, y)\right) \cdot \exp\!\left(-1 - \frac{\lambda}{\beta}\right)$$
+      <p>The constant $\exp(-1 - \lambda/\beta)$ is absorbed into the partition function $1/Z(x)$, yielding the stated result.</p>
+    </details>
+
+    <h3 id="implicit-reward">The Implicit Reward Parameterization</h3>
+
+    <p>The closed-form solution above tells us the shape of the optimal policy given a reward function. The key DPO insight is to <em>rearrange</em> this expression to extract the reward in terms of the policy. Taking logs of both sides:</p>
+
+    $$\log p^*(y \mid x) = \log p^{PT}(y \mid x) + \frac{1}{\beta} RM(x, y) - \log Z(x)$$
+
+    <p>Solving for the reward:</p>
+
+    $$RM(x, y) = \beta \log \frac{p^*(y \mid x)}{p^{PT}(y \mid x)} + \beta \log Z(x)$$
+
+    <p>This is remarkable: it expresses the reward function entirely in terms of the optimal policy $p^*$ and the reference model $p^{PT}$, plus a prompt-dependent constant $\beta \log Z(x)$. Since this relationship holds for <em>any</em> policy (not just the true optimal one), we can parameterize the implicit reward using our trainable policy $p_\theta^{RL}$:</p>
+
+    $$RM_\theta(x, y) = \beta \log \frac{p_\theta^{RL}(y \mid x)}{p^{PT}(y \mid x)} + \beta \log Z(x)$$
+
+    <h3 id="dpo-loss">The DPO Loss Function</h3>
+
+    <p>Now we substitute this implicit reward into the Bradley-Terry preference model. Recall that the reward model training objective depends only on the <em>difference</em> in rewards between the preferred and dispreferred responses:</p>
+
+    $$RM_\theta(x, y_w) - RM_\theta(x, y_l) = \beta \log \frac{p_\theta^{RL}(y_w \mid x)}{p^{PT}(y_w \mid x)} - \beta \log \frac{p_\theta^{RL}(y_l \mid x)}{p^{PT}(y_l \mid x)}$$
+
+    <p>The partition function $\beta \log Z(x)$ cancels out, since it depends only on the prompt, not on the response. Substituting into the Bradley-Terry loss gives the DPO objective:</p>
+
+    <div class="callout theorem">
+      <div class="callout-label">Theorem</div>
+      <strong>DPO Loss Function.</strong> The Direct Preference Optimization loss is:
+      $$J_{\text{DPO}}(\theta) = -\E_{(x, y_w, y_l) \sim \mathcal{D}}\!\left[\log \sigma\!\left(\beta \log \frac{p_\theta^{RL}(y_w \mid x)}{p^{PT}(y_w \mid x)} - \beta \log \frac{p_\theta^{RL}(y_l \mid x)}{p^{PT}(y_l \mid x)}\right)\right]$$
+      This is a binary classification loss: the model learns to assign higher log-probability ratios to preferred responses than to dispreferred ones.
+    </div>
+
+    <p>DPO elegantly collapses the three-stage RLHF pipeline (SFT, reward model training, RL optimization) into a single supervised learning step. The only inputs needed are a reference model $p^{PT}$, preference pairs $(x, y_w, y_l)$, and standard gradient descent. There is no separate reward model, no on-policy sampling, and no value function to fit.</p>
+
+    <div class="callout example">
+      <div class="callout-label">Example</div>
+      <strong>DPO in practice.</strong> Given a prompt "Explain quantum entanglement" with a preferred response $y_w$ (clear, accurate explanation) and a dispreferred response $y_l$ (vague, slightly incorrect), DPO adjusts the policy so that $\log \frac{p_\theta(y_w \mid x)}{p^{PT}(y_w \mid x)}$ increases relative to $\log \frac{p_\theta(y_l \mid x)}{p^{PT}(y_l \mid x)}$. The model simultaneously learns to upweight good responses and downweight bad ones, all relative to the reference model baseline.
+    </div>
+
+    <!-- Section 6: RLHF vs DPO Comparison -->
+    <h2 id="rlhf-vs-dpo">RLHF versus DPO: Trade-offs</h2>
+
+    <p>Both RLHF and DPO optimize the same underlying objective&mdash;KL-constrained reward maximization from preference data&mdash;but they differ substantially in implementation.</p>
+
+    <h3 id="rlhf-strengths">Strengths of RLHF</h3>
+
+    <ul>
+      <li><strong>Online data.</strong> RLHF generates fresh samples from the current policy during training, allowing the reward model to evaluate the model's actual outputs. This on-policy feedback can be crucial when the distribution of outputs shifts significantly during training.</li>
+      <li><strong>Proven at scale.</strong> InstructGPT (Ouyang et al., 2022) scaled RLHF to tens of thousands of tasks and demonstrated substantial improvements in helpfulness, truthfulness, and harmlessness. ChatGPT built on this approach for dialogue agents.</li>
+      <li><strong>Flexibility.</strong> The explicit reward model can be reused across multiple training runs, analyzed for failure modes, and combined with additional reward signals.</li>
+    </ul>
+
+    <h3 id="dpo-strengths">Strengths of DPO</h3>
+
+    <ul>
+      <li><strong>Simplicity.</strong> No reward model, no value function, no on-policy sampling. DPO is a single supervised learning pass over preference data.</li>
+      <li><strong>Stability.</strong> RL optimization is notoriously sensitive to hyperparameters. DPO avoids the instabilities of policy gradient training&mdash;there is no reward hacking, no mode collapse from aggressive optimization, and no need to tune PPO-specific parameters.</li>
+      <li><strong>Computational efficiency.</strong> DPO requires only forward and backward passes through the policy model (and a frozen reference model for computing $p^{PT}$), avoiding the expensive sampling loop of RL.</li>
+    </ul>
+
+    <p>DPO has been widely adopted in the open-source LLM ecosystem, where most models now use DPO (or variants) as part of their alignment pipeline. However, DPO's reliance on offline preference data means it cannot explore new parts of the output space during training, which can limit performance when the preference dataset does not cover the model's current behavior.</p>
+
+    <!-- Section 7: InstructGPT and ChatGPT -->
+    <h2 id="instructgpt-chatgpt">InstructGPT and ChatGPT</h2>
+
+    <p>The most influential application of RLHF at scale was <strong>InstructGPT</strong> (Ouyang et al., 2022), which applied the full three-stage pipeline to GPT-3. The process began with supervised finetuning on 13,000 demonstration examples, followed by reward model training on 33,000 human comparisons, and finally PPO-based RL optimization. The result was a model that dramatically outperformed the much larger base GPT-3 on human preference evaluations&mdash;the 1.3B parameter InstructGPT was preferred over the 175B GPT-3, demonstrating that alignment can substitute for raw scale.</p>
+
+    <p>InstructGPT covered approximately 30,000 tasks spanning generation, question answering, dialogue, summarization, classification, and more. The diversity of task types was essential: the model needed to generalize the "be helpful, harmless, and honest" signal across widely varying contexts.</p>
+
+    <p><strong>ChatGPT</strong> extended this approach to multi-turn dialogue. While OpenAI disclosed fewer training details, the core recipe remained the same: instruction finetuning followed by RLHF, with the dialogue format requiring careful handling of conversation history and turn-taking. The resulting model exhibited clear stylistic changes compared to the base model&mdash;responses became more detailed, better formatted, and structured with lists and headers (Dubois et al., 2023).</p>
+
+    <div class="callout insight">
+      <div class="callout-label">Key Insight</div>
+      RLHF produces observable stylistic shifts beyond factual accuracy. Models trained with RLHF tend to generate longer, more structured, and more detailed responses. This reflects what human annotators reward&mdash;but it also means the model optimizes for <em>appearing</em> helpful, which can diverge from <em>being</em> helpful.
+    </div>
+
+    <!-- Section 8: Limitations -->
+    <h2 id="limitations">Limitations of Preference Optimization</h2>
+
+    <p>Both RLHF and DPO share fundamental limitations that stem from the difficulty of specifying and modeling human preferences.</p>
+
+    <h3 id="reward-hacking">Reward Hacking</h3>
+
+    <p>Reward hacking occurs when the model finds ways to achieve high predicted reward without actually satisfying human preferences. Because the reward model is an imperfect proxy for human judgment, sufficiently aggressive optimization will exploit its errors. OpenAI documented dramatic examples: models trained with RL sometimes produce degenerate outputs that score highly under the reward model but are clearly nonsensical to humans.</p>
+
+    <p>The KL constraint mitigates this by limiting how far the policy can deviate from the reference model, but it does not eliminate the problem. In practice, there is a characteristic pattern of <strong>reward model over-optimization</strong>: as the KL divergence from the reference model increases, the true (human-evaluated) quality initially improves but eventually degrades, even as the predicted reward continues to rise (Stiennon et al., 2020).</p>
+
+    <h3 id="hallucinations">Hallucinations and Sycophancy</h3>
+
+    <p>RLHF-trained chatbots are rewarded for producing responses that <em>seem</em> authoritative and helpful. This creates an incentive to state claims confidently, regardless of whether they are true&mdash;leading to hallucinations (making up facts) and sycophancy (telling users what they want to hear rather than what is correct). These failure modes are difficult to address through preference optimization alone, because human annotators often cannot distinguish confident-sounding falsehoods from truth.</p>
+
+    <h3 id="data-expense">Data Expense</h3>
+
+    <p>Collecting high-quality human preference data remains expensive. Each comparison requires a trained annotator to read and evaluate two full model responses, and annotator agreement rates are often modest. This cost limits the scale and coverage of preference datasets, particularly for specialized domains.</p>
+
+    <!-- Section 9: Future Directions -->
+    <h2 id="future-directions">Future Directions</h2>
+
+    <p>Several lines of research aim to address the limitations of current preference optimization methods.</p>
+
+    <h3 id="rlaif">RL from AI Feedback (RLAIF)</h3>
+
+    <p><strong>Constitutional AI</strong> (Bai et al., 2022) replaces human annotators with AI-generated feedback. The model critiques its own outputs according to a set of principles (a "constitution"), then revises its responses. The critique-revision pairs serve as training data for preference optimization. This dramatically reduces the cost of data collection while allowing the alignment criteria to be specified declaratively rather than implicitly through annotator behavior.</p>
+
+    <h3 id="self-improvement">Self-Improvement and Self-Taught Reasoning</h3>
+
+    <p>Another direction is to finetune language models on their own successful outputs. The <strong>Self-Taught Reasoner (STaR)</strong> approach (Zelikman et al., 2022) works as follows: the model generates chain-of-thought reasoning traces for a set of problems, filters for those that produce correct answers, and then trains on the successful traces. Over multiple iterations, the model bootstraps increasingly sophisticated reasoning abilities from its own generations. This is particularly effective for domains like code and mathematics where correctness can be verified automatically.</p>
+
+    <h3 id="personalization">Personalization</h3>
+
+    <p>Current preference optimization treats "human preferences" as a monolithic signal, but in reality preferences vary enormously across individuals. The PRISM Alignment Project (Kirk et al., 2024) and Few-Shot Preference Optimization (FSPO) (Singh and Hsu et al., 2024) explore how to adapt language models to individual users' preferences without requiring per-user RLHF. This is an increasingly important direction as language models are deployed to diverse user populations with varying needs, values, and communication styles.</p>
+
+    <!-- Section 10: Summary -->
+    <h2 id="summary">Summary</h2>
+
+    <p>Preference optimization transforms capable but unaligned language models into helpful assistants. The journey from pretraining through instruction finetuning to RLHF or DPO represents a progression from learning <em>what text looks like</em> to learning <em>what users want</em>.</p>
+
+    <p>The core mathematical insight underlying both RLHF and DPO is the KL-constrained reward maximization problem. RLHF solves it via policy gradient methods applied to a learned reward model; DPO exploits the closed-form solution to bypass the reward model entirely, reducing preference alignment to a binary classification problem. Both approaches have been validated at scale&mdash;InstructGPT and ChatGPT for RLHF, and a growing number of open-source models for DPO.</p>
+
+    <p>The limitations of preference optimization&mdash;reward hacking, hallucinations, sycophancy, and data cost&mdash;remain active research challenges. Emerging approaches like Constitutional AI, self-taught reasoning, and personalized alignment offer promising paths forward, but the fundamental tension between optimizing for <em>appearing</em> good and <em>being</em> good continues to define the frontier of the field.</p>
+
   </article>
 
   <nav class="lecture-nav">

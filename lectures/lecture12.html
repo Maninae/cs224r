@@ -46,14 +46,251 @@
       <span class="lecture-tag">HER</span>
       <span class="lecture-tag">Universal Value Functions</span>
     </div>
-    <a class="lecture-pdf-link" href="../slides/cs224r_2025_lecture12.pdf" target="_blank">
+    <a class="lecture-pdf-link" href="../slides/12_cs224r_mtrl_gcrl_2025.pdf" target="_blank">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
       Original PDF slides
     </a>
   </div>
 
   <article class="lecture-article">
-    <!-- Content will be added in Phase 3 -->
+
+    <!-- Section 1: From Single-Task to Multi-Task RL -->
+    <h2 id="from-single-to-multi">From Single-Task to Multi-Task RL</h2>
+
+    <p>Throughout the first part of this course, we trained agents to solve one task at a time: balance a cartpole, navigate a maze, or achieve a single goal configuration. But the real world demands versatility. A household robot must make coffee, clean dishes, and set the table&mdash;all with the same body and brain. A warehouse system must pick, place, pack, and sort thousands of different products. Training a separate policy for each task from scratch is both data-inefficient and fails to leverage the obvious structural similarities between related tasks.</p>
+
+    <p><strong>Multi-task reinforcement learning</strong> addresses this by training a single policy (or a small family of policies) to solve an entire distribution of tasks simultaneously. The central promise is twofold: (1) sharing data and representations across tasks can dramatically improve sample efficiency, and (2) the resulting generalist agent can exhibit combinatorial generalization&mdash;solving novel task combinations never seen during training.</p>
+
+    <div class="callout insight">
+      <div class="callout-label">Key Insight</div>
+      The shift from single-task to multi-task RL mirrors the transition from training one neural network per ImageNet class to training a single classifier for all classes. Just as shared low-level features (edges, textures) benefit all vision tasks, shared dynamics understanding and motor primitives benefit all control tasks.
+    </div>
+
+    <h3 id="why-multi-task">Why Multi-Task RL?</h3>
+
+    <p>Several compelling motivations drive multi-task RL research:</p>
+
+    <ul>
+      <li><strong>Data efficiency through sharing:</strong> Experience collected while learning one task can accelerate learning on related tasks. A robot learning to grasp mugs generates trajectories that are also informative for grasping bowls.</li>
+      <li><strong>Amortization of computation:</strong> Rather than running a full RL optimization for each new task, a multi-task agent can reuse learned representations and adapt quickly.</li>
+      <li><strong>Generalization to new tasks:</strong> With sufficient task diversity during training, the agent may generalize to tasks it has never encountered before, provided they lie within the support of the training distribution.</li>
+      <li><strong>Practical deployment:</strong> Deploying a single generalist model is far simpler than maintaining a library of specialized policies.</li>
+    </ul>
+
+
+    <!-- Section 2: Formalizing Multi-Task RL -->
+    <h2 id="formalizing-multi-task">Formalizing Multi-Task RL</h2>
+
+    <p>To formalize multi-task RL, we need to specify what constitutes a "task" and how tasks relate to one another. The standard approach is to define each task as a distinct Markov Decision Process drawn from a shared family.</p>
+
+    <div class="callout definition">
+      <div class="callout-label">Definition</div>
+      <strong>Task Distribution.</strong> A <strong>task distribution</strong> $p(\mathcal{M})$ is a distribution over MDPs $\mathcal{M}_i = (\mathcal{S}, \mathcal{A}, T_i, R_i, \gamma)$, where different tasks may differ in their transition dynamics $T_i$, their reward function $R_i$, or both, while sharing the same state space $\mathcal{S}$ and action space $\mathcal{A}$.
+    </div>
+
+    <p>Each task $\mathcal{M}_i$ is associated with a <strong>task identifier</strong> $z_i$ that encodes the relevant information distinguishing it from other tasks. This identifier might be a one-hot vector, a natural language description, a goal image, or a learned latent embedding.</p>
+
+    <h3 id="task-augmented-mdp">The Task-Augmented MDP</h3>
+
+    <p>A clean way to incorporate the task identifier into the standard MDP framework is through <strong>state augmentation</strong>. We define an augmented state that concatenates the original environment state $\bar{s}$ with the task identifier $z_i$:</p>
+
+    $$s = (\bar{s}, z_i)$$
+
+    <p>Under this formulation, a single MDP $\mathcal{M}^{\text{aug}} = (\mathcal{S} \times \mathcal{Z}, \mathcal{A}, T, R, \gamma)$ subsumes the entire task family. The transition dynamics and reward function of the augmented MDP dispatch to the appropriate task-specific behavior based on $z_i$. This is elegant because it reduces multi-task RL to single-task RL in a larger state space&mdash;at least in principle. In practice, the challenge lies in learning a policy that can effectively condition on $z_i$ to exhibit diverse behaviors.</p>
+
+    <h3 id="what-varies-across-tasks">What Varies Across Tasks?</h3>
+
+    <p>Different problem settings emphasize different sources of variation:</p>
+
+    <ul>
+      <li><strong>Different rewards, same dynamics:</strong> The environment physics are identical, but the agent is asked to achieve different objectives. Example: a robot arm with fixed dynamics but varying target object placements.</li>
+      <li><strong>Different dynamics, same reward:</strong> The objective is the same, but the environment behaves differently. Example: locomotion across varying terrain types, all with the goal of moving forward.</li>
+      <li><strong>Both vary:</strong> The most general case, where each task has unique dynamics and rewards. Example: different cooking recipes requiring different ingredients and sequences of actions.</li>
+    </ul>
+
+    <div class="callout example">
+      <div class="callout-label">Example</div>
+      <strong>Robot Manipulation Tasks.</strong> Consider a robotic arm that must perform various manipulation tasks: pick up a red block, push a blue cylinder to a target location, or stack objects in a specified order. Here $\bar{s}$ includes joint angles and object poses, while $z_i$ encodes the specific task instruction. All tasks share the same robot dynamics, but the reward function (what constitutes success) differs for each task.
+    </div>
+
+
+    <!-- Section 3: Goal-Conditioned RL -->
+    <h2 id="goal-conditioned-rl">Goal-Conditioned Reinforcement Learning</h2>
+
+    <p>An important special case of multi-task RL arises when the task identifier is simply a <strong>desired goal state</strong> $s_g \in \mathcal{S}$. This is called <strong>goal-conditioned RL</strong>, and it has become one of the most widely studied formulations in the field.</p>
+
+    <div class="callout definition">
+      <div class="callout-label">Definition</div>
+      <strong>Goal-Conditioned Policy.</strong> A goal-conditioned policy $\pi(a \mid s, g)$ maps the current state $s$ and a desired goal $g$ to an action distribution. The reward function is typically defined as a function of the distance between the achieved state and the goal:
+      $$r(s, a, g) = -d(s', g)$$
+      where $d$ is a distance metric (e.g., Euclidean distance) and $s'$ is the resulting next state. In the sparse variant, $r = \mathbf{1}[d(s', g) < \epsilon]$ for some threshold $\epsilon$.
+    </div>
+
+    <p>Goal-conditioned RL is appealing because goals provide a natural, interpretable way to specify tasks, and the space of goals is often the same as the state space, enabling a form of combinatorial generalization. A policy trained to reach a diverse set of goal positions can interpolate to reach goals it never explicitly practiced during training.</p>
+
+    <h3 id="universal-value-functions">Universal Value Functions</h3>
+
+    <p>Schaul et al. (2015) introduced the concept of <strong>Universal Value Function Approximators (UVFAs)</strong>, which extend the standard value function to be conditioned on both state and goal:</p>
+
+    $$V(s, g; \theta) = \E\!\left[\sum_{t=0}^{\infty} \gamma^t r(s_t, a_t, g) \;\middle|\; s_0 = s, \pi(\cdot \mid \cdot, g)\right]$$
+
+    <p>Similarly, the action-value function becomes $Q(s, a, g; \theta)$. The key insight is that a single neural network can learn to represent value functions across the entire goal space, with the network implicitly learning to share representations for similar goals. This is precisely the multi-task state augmentation idea, specialized to goals.</p>
+
+
+    <!-- Section 4: Multi-Task Imitation Learning -->
+    <h2 id="multi-task-imitation">Multi-Task Imitation Learning</h2>
+
+    <p>Before diving into multi-task RL algorithms, it is worth noting that multi-task <strong>imitation learning</strong>&mdash;learning from demonstrations rather than from reward signals&mdash;provides a simpler starting point and has seen enormous practical success in robotics.</p>
+
+    <p>Given a dataset of expert demonstrations across multiple tasks, $\mathcal{D} = \{(\tau_j, z_j)\}_{j=1}^{N}$ where $\tau_j$ is a trajectory and $z_j$ is the corresponding task identifier, we train a task-conditioned policy via behavioral cloning:</p>
+
+    $$\max_\theta \; \E_{(\tau, z) \sim \mathcal{D}} \left[\sum_{t} \log \pi_\theta(a_t \mid s_t, z)\right]$$
+
+    <h3 id="stratified-sampling">Stratified Sampling</h3>
+
+    <p>A practical challenge in multi-task imitation learning is <strong>data imbalance</strong>. Some tasks may have far more demonstration data than others. Naively sampling uniformly from $\mathcal{D}$ will bias the policy toward well-represented tasks. <strong>Stratified sampling</strong> addresses this by ensuring each task receives equal representation in each training batch, regardless of how many demonstrations are available for it.</p>
+
+    <div class="callout insight">
+      <div class="callout-label">Key Insight</div>
+      Stratified sampling prevents the multi-task policy from "forgetting" rare tasks. Without it, tasks with abundant data dominate the gradient, and the policy effectively becomes a specialist on the most common tasks. This is analogous to class-balanced sampling in long-tailed image recognition.
+    </div>
+
+    <h3 id="task-conditioning-architectures">Task Conditioning Architectures</h3>
+
+    <p>How should the task identifier $z_i$ be injected into the policy network? Several architectures have proven effective:</p>
+
+    <ul>
+      <li><strong>Concatenation:</strong> The simplest approach appends $z_i$ to the input alongside the state $s$. The network processes $[s; z_i]$ through shared layers.</li>
+      <li><strong>FiLM conditioning:</strong> Feature-wise Linear Modulation layers allow $z_i$ to scale and shift intermediate activations: $\text{FiLM}(h; z) = \gamma(z) \odot h + \beta(z)$, where $\gamma$ and $\beta$ are learned functions of $z$.</li>
+      <li><strong>Language conditioning:</strong> When tasks are described in natural language, a language encoder (e.g., a pretrained transformer) maps the instruction to an embedding that conditions the policy. This enables zero-shot generalization to novel task descriptions.</li>
+    </ul>
+
+    <div class="callout example">
+      <div class="callout-label">Example</div>
+      <strong>BC-Z (Jang et al., 2022).</strong> BC-Z trains a single vision-language-conditioned policy on over 100 manipulation tasks. The task identifier is a natural language instruction such as "pick up the red block" or "open the drawer." At test time, the robot can follow instructions for tasks never seen during training, demonstrating zero-shot generalization from language-conditioned imitation learning.
+    </div>
+
+    <p>More recently, <strong>OpenVLA</strong> and similar vision-language-action models take this further by using large pretrained vision-language models as the backbone, with robot actions generated as output tokens. These models leverage internet-scale pretraining to achieve broad generalization across manipulation tasks.</p>
+
+
+    <!-- Section 5: Multi-Task RL Algorithms -->
+    <h2 id="multi-task-rl-algorithms">Multi-Task RL Algorithms</h2>
+
+    <p>Extending RL algorithms to the multi-task setting is conceptually straightforward: we condition both the policy and the value function on the task identifier $z_i$, and we optimize across the task distribution. Concretely, the multi-task RL objective is:</p>
+
+    $$\max_\theta \; \E_{\mathcal{M}_i \sim p(\mathcal{M})} \left[\E_{\pi_\theta(\cdot \mid \cdot, z_i)} \left[\sum_{t=0}^{\infty} \gamma^t r_i(s_t, a_t)\right]\right]$$
+
+    <p>The policy $\pi_\theta(a \mid s, z_i)$ and Q-function $Q_\theta(s, a, z_i)$ are both conditioned on the task. In practice, we can apply any standard RL algorithm&mdash;SAC, PPO, DQN&mdash;with task-conditioned networks. During training, we sample tasks from $p(\mathcal{M})$, collect experience, and update the shared parameters $\theta$.</p>
+
+    <h3 id="challenges-multi-task-rl">Challenges in Multi-Task RL</h3>
+
+    <p>While the formulation is clean, several practical challenges arise:</p>
+
+    <ul>
+      <li><strong>Conflicting gradients:</strong> Different tasks may push the shared parameters in opposing directions, leading to destructive interference and suboptimal performance on some tasks.</li>
+      <li><strong>Reward scale variation:</strong> Tasks with higher-magnitude rewards dominate the optimization. Reward normalization per task is essential.</li>
+      <li><strong>Exploration complexity:</strong> The agent must explore effectively across all tasks simultaneously. A strategy that is informative for one task may be useless for another.</li>
+      <li><strong>Negative transfer:</strong> In some cases, training on additional tasks can actually hurt performance compared to single-task training, particularly when tasks are dissimilar.</li>
+    </ul>
+
+
+    <!-- Section 6: Hindsight Experience Replay -->
+    <h2 id="hindsight-experience-replay">Hindsight Experience Replay</h2>
+
+    <p>One of the most elegant ideas in goal-conditioned RL is <strong>Hindsight Experience Replay (HER)</strong>, introduced by Andrychowicz et al. (2017). HER addresses a critical problem: when goals are specified with sparse binary rewards ($r = 1$ if the goal is reached, $0$ otherwise), the agent almost never receives positive reward during early training, making learning extremely difficult.</p>
+
+    <p>The key insight is deceptively simple: even if the agent fails to reach its intended goal, the trajectory it produced <em>did</em> reach some state. We can retroactively relabel that trajectory as if the achieved state had been the goal all along.</p>
+
+    <div class="callout definition">
+      <div class="callout-label">Definition</div>
+      <strong>Hindsight Experience Replay (HER).</strong> Given a trajectory $\tau = (s_0, a_0, s_1, a_1, \ldots, s_T)$ collected while attempting to reach goal $g$, HER creates additional training examples by substituting alternative goals $g' \in G(\tau)$, where $G(\tau)$ is a set of goals derived from the trajectory itself. The most common strategy sets $g' = s_T$ (the final state actually reached), yielding a "successful" trajectory with reward signal.
+    </div>
+
+    <div class="algorithm">
+      <div class="algorithm-title">Hindsight Experience Replay (HER)</div>
+      <ol>
+        <li>Sample a goal $g$ from the goal distribution.</li>
+        <li>Collect a trajectory $\tau = (s_0, a_0, s_1, \ldots, s_T)$ using the current goal-conditioned policy $\pi(a \mid s, g)$.</li>
+        <li>Store the original transitions $\{(s_t, a_t, r_t, s_{t+1}, g)\}$ in the replay buffer with the original goal $g$ and rewards $r_t = r(s_t, a_t, g)$.</li>
+        <li>For each transition, also store relabeled versions $\{(s_t, a_t, r'_t, s_{t+1}, g')\}$ with alternative goals $g' \in G(\tau)$ and recomputed rewards $r'_t = r(s_t, a_t, g')$.</li>
+        <li>Train the goal-conditioned Q-function and policy using the augmented replay buffer.</li>
+      </ol>
+      <p>Common relabeling strategies for $G(\tau)$: <em>final</em> (use $s_T$), <em>future</em> (sample a state reached later in the same trajectory), <em>episode</em> (sample any state from the trajectory), or <em>random</em> (sample from all collected states).</p>
+    </div>
+
+    <div class="callout insight">
+      <div class="callout-label">Key Insight</div>
+      HER transforms every trajectory into a learning signal, regardless of whether the original goal was achieved. This is particularly powerful in sparse-reward settings where standard RL algorithms would receive no gradient signal for thousands of episodes. The "future" relabeling strategy is generally the most effective, as it creates a natural curriculum from easy (nearby) to hard (distant) goals.
+    </div>
+
+    <h3 id="her-multi-task">HER for Multi-Task RL</h3>
+
+    <p>The hindsight relabeling idea extends naturally beyond goals to general multi-task settings. If the task identifier $z_i$ determines the reward function $r_i$, and we can compute the reward under alternative task identifiers, then we can relabel any trajectory with alternative tasks:</p>
+
+    $$\text{Original: } (s_t, a_t, r_i(s_t, a_t), s_{t+1}, z_i) \quad \longrightarrow \quad \text{Relabeled: } (s_t, a_t, r_j(s_t, a_t), s_{t+1}, z_j)$$
+
+    <p>This multi-task hindsight relabeling effectively multiplies the useful data by the number of tasks, since each trajectory provides learning signal for many different task identifiers. The only requirement is that we can efficiently evaluate the reward function for alternative tasks given the observed transitions.</p>
+
+
+    <!-- Section 7: Practical Architectures and Scaling -->
+    <h2 id="practical-architectures">Practical Architectures and Scaling</h2>
+
+    <p>Scaling multi-task and goal-conditioned RL to complex environments with high-dimensional observations (e.g., images) and large task spaces requires careful architectural choices.</p>
+
+    <h3 id="vision-language-action">Vision-Language-Action Models</h3>
+
+    <p>The most recent wave of multi-task robot learning leverages large pretrained models. The recipe combines three ingredients:</p>
+
+    <ol>
+      <li><strong>Visual encoder:</strong> A pretrained vision model (e.g., ViT, SigLIP) that maps raw images to a compact representation.</li>
+      <li><strong>Language encoder:</strong> A pretrained language model that embeds task instructions.</li>
+      <li><strong>Action decoder:</strong> A network that maps the fused vision-language representation to robot actions, often trained with a flow-matching or diffusion objective to capture multimodal action distributions.</li>
+    </ol>
+
+    <p>Systems like <strong>$\pi_0$</strong> (Physical Intelligence, 2024) demonstrate that this approach can yield a single policy capable of folding laundry, packing boxes, busing tables, and assembling objects&mdash;all from a unified architecture trained on diverse multi-task data. The scale of the training data (thousands of hours of robot teleoperation across many tasks) is critical for the generalization to emerge.</p>
+
+    <h3 id="multi-task-challenges-at-scale">Challenges at Scale</h3>
+
+    <p>As the number of tasks grows, new challenges emerge beyond those discussed earlier:</p>
+
+    <ul>
+      <li><strong>Catastrophic forgetting:</strong> Revisiting old tasks less frequently can cause the policy to degrade on them. Replay buffers and careful curriculum design help mitigate this.</li>
+      <li><strong>Task specification ambiguity:</strong> Natural language instructions can be ambiguous. "Clean up" might mean different things in different contexts. Grounding language in the physical world remains an open challenge.</li>
+      <li><strong>Evaluation complexity:</strong> Measuring the performance of a policy across hundreds or thousands of tasks requires careful benchmarking and aggregation of metrics. Average success rate can mask catastrophic failure on specific tasks.</li>
+    </ul>
+
+
+    <!-- Section 8: Theoretical Perspective -->
+    <h2 id="theoretical-perspective">Theoretical Perspective</h2>
+
+    <p>Multi-task RL has strong theoretical motivation. Under the task-augmented MDP formulation, we can analyze the sample complexity benefits of sharing data across tasks.</p>
+
+    <p>Consider $K$ tasks, each requiring $N$ samples to learn in isolation. If the tasks share a common representation $\phi: \mathcal{S} \to \R^d$ (where $d$ is much smaller than $|\mathcal{S}|$), then the total sample complexity for learning all $K$ tasks jointly can scale as $O(d \cdot K + d^2)$ rather than $O(N \cdot K)$. The first term accounts for task-specific learning on top of the shared representation, and the second for learning the representation itself. When $d^2 \ll N \cdot K$, multi-task learning provides a substantial sample complexity reduction.</p>
+
+    <div class="callout theorem">
+      <div class="callout-label">Theorem</div>
+      <strong>Benefits of Representation Sharing (Informal).</strong> If $K$ tasks share a common low-dimensional representation of dimension $d$, the total sample complexity for learning all tasks jointly is $\tilde{O}(dK + d^2)$, compared to $\tilde{O}(NK)$ for learning each task independently, where $N$ is the sample complexity per task. This yields a factor-of-$N/d$ improvement when $K$ is large.
+    </div>
+
+    <p>This result formalizes the intuition that shared structure across tasks enables faster learning. The key assumption&mdash;that a shared low-dimensional representation exists&mdash;is both the strength and the limitation of the theory. In practice, the degree of sharing varies, and negative transfer can occur when tasks are insufficiently related.</p>
+
+
+    <!-- Section 9: Looking Ahead -->
+    <h2 id="looking-ahead">Looking Ahead</h2>
+
+    <p>This lecture introduced multi-task and goal-conditioned RL as natural extensions of the single-task RL framework. The task-augmented MDP formulation provides a unified view, and algorithms like HER demonstrate how to squeeze maximum learning signal from every trajectory.</p>
+
+    <p>Key takeaways:</p>
+
+    <ul>
+      <li>Multi-task RL trains a single policy to solve a distribution of tasks by conditioning on task identifiers.</li>
+      <li>Goal-conditioned RL is an important special case where the task is specified by a desired state.</li>
+      <li>Hindsight relabeling (HER) enables learning from failure by retroactively reassigning goals or tasks to collected trajectories.</li>
+      <li>Modern architectures use vision-language-action models pretrained on internet-scale data to achieve broad generalization across manipulation tasks.</li>
+    </ul>
+
+    <p>A natural question emerges: can we go beyond training on a fixed task distribution and instead learn an agent that <em>rapidly adapts</em> to entirely new tasks from just a few interactions? This is the promise of <strong>meta-reinforcement learning</strong>, which we take up in the next lecture.</p>
+
   </article>
 
   <nav class="lecture-nav">

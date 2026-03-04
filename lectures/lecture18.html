@@ -46,14 +46,332 @@
       <span class="lecture-tag">Future Directions</span>
       <span class="lecture-tag">Research</span>
     </div>
-    <a class="lecture-pdf-link" href="../slides/cs224r_2025_lecture18.pdf" target="_blank">
+    <a class="lecture-pdf-link" href="../slides/18_cs224r_frontiers_how_to_research.pdf" target="_blank">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
       Original PDF slides
     </a>
   </div>
 
   <article class="lecture-article">
-    <!-- Content will be added in Phase 3 -->
+
+    <!-- Section 1: The Frontier Landscape -->
+    <h2 id="frontier-landscape">The Frontier Landscape</h2>
+
+    <p>This final lecture surveys the most important open problems and future directions in deep reinforcement learning research. Over the preceding seventeen lectures, we have built a comprehensive toolkit: imitation learning, policy gradients, actor-critic methods, value-based approaches, model-based RL, offline RL, multi-task learning, RL for LLMs, and sim-to-real transfer. The question now is: <em>where does the field go from here?</em></p>
+
+    <p>The open problems are organized along three axes that mirror the structure of any applied RL project:</p>
+
+    <ol>
+      <li><strong>Problem setup</strong> &mdash; defining what we want the agent to optimize, especially in domains where reward signals are ambiguous, delayed, or absent</li>
+      <li><strong>Methods</strong> &mdash; developing algorithms that can leverage prior knowledge, use world models effectively, and scale to the computational demands of real-world applications</li>
+      <li><strong>Deployment and evaluation</strong> &mdash; ensuring that learned policies are safe, reliable, and can be evaluated before and after deployment</li>
+    </ol>
+
+    <p>We then conclude with practical advice on how to do research in deep RL&mdash;choosing problems, managing risk, sharing results, and building confidence as a researcher.</p>
+
+    <!-- Section 2: Non-Rewarding, Non-Verifiable Domains -->
+    <h2 id="non-verifiable-domains">Non-Rewarding, Non-Verifiable Domains</h2>
+
+    <p>Many of the most impressive RL successes occur in domains where rewards are <em>well-specified and verifiable</em>: games with clear win/loss conditions, mathematical reasoning with checkable proofs, coding with executable test cases. In these settings, the agent can be evaluated precisely and at scale. But some of the most important real-world applications do not have this luxury.</p>
+
+    <h3 id="llm-chatbots">LLMs for Chatbots</h3>
+
+    <p>The dominant approach for aligning language models with human preferences is <strong>preference optimization</strong>&mdash;training the model using human comparisons of response pairs. But this approach has deep structural problems. When presented with two responses, human raters tend to prefer outputs that agree with them, that sound confident, and that tell them what they want to hear&mdash;regardless of whether the response is actually true. This conflation of agreeableness with quality creates a systematic bias in the reward signal.</p>
+
+    <p>The challenges compound further. Individual preferences are inherently subjective, raising tensions between <em>personalization</em> (adapting to each user's preferences) and <em>polarization</em> (reinforcing existing beliefs). Multiple objectives&mdash;helpfulness, honesty, harmlessness, conciseness&mdash;may compete with each other, and current approaches to balancing them rely on crude heuristics.</p>
+
+    <h3 id="robotics-rewards">Robotics</h3>
+
+    <p>In robotics, reward functions are often binary (success or failure) or heavily hand-shaped with dozens of manually tuned terms. Consider the task of folding a shirt: how would you score each of three different folds? The "right" answer depends on context, aesthetics, and personal preference in ways that are extremely difficult to formalize as a scalar reward. Current robotics rewards lack the nuance needed for truly general-purpose manipulation.</p>
+
+    <h3 id="recommendation-systems">Recommendation Systems</h3>
+
+    <p>Platforms like YouTube optimize a weighted combination of engagement metrics (clicks, watch time) and satisfaction signals (likes, surveys). The weights on these competing objectives are <em>manually tuned</em>&mdash;a process that does not scale and is sensitive to unforeseen interactions between metrics. Small changes in reward weights can have large, unpredictable effects on user behavior at scale.</p>
+
+    <h3 id="scientific-reasoning">Scientific Experimentation and Learning</h3>
+
+    <p>Perhaps the most ambitious frontier is applying RL to domains where even defining the reward function requires deep domain expertise: scientific experimentation, creative design, and open-ended learning. The success of RL for mathematical reasoning suggests that similar techniques could work for scientific reasoning, but the verification of scientific claims is far more complex than checking a proof.</p>
+
+    <div class="callout insight">
+      <div class="callout-label">Key Insight</div>
+      The domains where RL is most needed&mdash;open-ended real-world tasks with subjective, delayed, or unverifiable outcomes&mdash;are precisely the domains where reward specification is hardest. Closing this gap is arguably the single most important open problem in applied deep RL. Solutions may involve learning reward models from diverse human feedback, using foundation models as reward proxies, or developing entirely new frameworks that go beyond scalar reward maximization.
+    </div>
+
+    <!-- Section 3: Leveraging Prior Data and Knowledge -->
+    <h2 id="prior-data">Leveraging Prior Data and Knowledge</h2>
+
+    <p>The default approach to incorporating prior knowledge into RL is straightforward: initialize model weights from a pre-trained model, and initialize the replay buffer with offline data. Methods like those of Ball et al. (2023) demonstrate the value of seeding the training process with demonstrations, initializing only the buffer (not the weights) to avoid constraining the learned policy to the pre-training distribution.</p>
+
+    <p>But this raises two deeper questions that remain largely unresolved:</p>
+
+    <h3 id="abstract-knowledge">Abstract Prior Knowledge</h3>
+
+    <p>How can we leverage <em>abstract</em> prior knowledge&mdash;hints, knowledge from textbooks or news articles, common-sense physical reasoning&mdash;rather than just model weights and trajectories? Current RL algorithms have no mechanism for ingesting unstructured knowledge. A human learning to drive can benefit from reading about traffic rules, watching videos, and hearing advice from experienced drivers; an RL agent can only learn from its own interaction data or pre-collected trajectories in the same format.</p>
+
+    <h3 id="beyond-pretraining">Going Beyond Pre-Training</h3>
+
+    <p>Do pre-training weights and data constrain learning too much? If an LLM is initialized from pre-training and then fine-tuned with RL, can it discover solutions that no human has ever written down? Can a robot policy initialized from demonstrations learn to perform tasks faster and more reliably than the human demonstrators? The evidence from AlphaGo suggests yes&mdash;RL can transcend the distribution of its training data&mdash;but achieving this consistently across domains remains an open challenge.</p>
+
+    <div class="callout example">
+      <div class="callout-label">Example</div>
+      <strong>Transcending the training distribution.</strong> AlphaGo's "Move 37" against Lee Sedol was a move that no human Go player had ever considered. It emerged from RL self-play that explored beyond the distribution of human games. Similarly, the locomotion gaits discovered by RMA (Lecture 17) include hip-abduction strategies on stairs that were never programmed or demonstrated. These examples suggest that RL's ability to go beyond prior data is not just theoretically possible but practically achievable&mdash;given the right problem structure and sufficient computation.
+    </div>
+
+    <!-- Section 4: Using World Models -->
+    <h2 id="world-models">Using World Models</h2>
+
+    <p>Video generation models represent an exciting potential source of world knowledge for RL. Modern video generators (like those from Google's Veo, OpenAI's Sora, and others) have learned rich models of how the visual world evolves over time. They can predict plausible future frames given an initial state, implicitly encoding knowledge about physics, object permanence, and scene dynamics. The question is: how can RL leverage this knowledge?</p>
+
+    <p>The most natural approach is to use a video generation model as a learned simulator: given a state $s_t$ and a sequence of actions $a_{t:t+h}$, predict the future state sequence $s_{t+1:t+h}$, then evaluate whether the predicted outcome is desirable. But this approach faces large, nuanced challenges.</p>
+
+    <h3 id="world-model-challenges">The Distribution Shift Problem</h3>
+
+    <p>If the world model is trained on demonstrations and one policy's rollouts, it has learned the dynamics under a specific distribution of actions. When a <em>new</em> policy produces actions $\tilde{a}_{t:t+h}$ that differ from the training distribution, the predicted future states will be unreliable&mdash;these actions are out of distribution for the model. Additionally, small physical inaccuracies in the predicted dynamics compound over time, leading to poor performance even for in-distribution action sequences.</p>
+
+    <p>Two possible solutions have been proposed:</p>
+
+    <ol>
+      <li><strong>Train on data from more policies:</strong> By collecting data under diverse policies, the world model can learn dynamics that are valid across a broader range of actions. This is expensive but conceptually straightforward.</li>
+      <li><strong>Use the model differently:</strong> Rather than conditioning on actions, train the model to predict future states from the current state alone (i.e., $s_t \to s_{t+1:t+h}$), trained only on demonstrations. Then generate a predicted future video and use a goal-conditioned policy to reach the predicted desirable future state. This avoids the action-conditioning distribution shift entirely, at the cost of requiring a separate goal-reaching policy.</li>
+    </ol>
+
+    <div class="callout insight">
+      <div class="callout-label">Key Insight</div>
+      Video generation models encode rich world knowledge, but using them as drop-in replacements for physics simulators does not work well due to distribution shift and compounding errors. The most promising approaches use these models <em>indirectly</em>&mdash;as sources of subgoals, reward signals, or data augmentation rather than as direct dynamics models for planning.
+    </div>
+
+    <!-- Section 5: How to Scale -->
+    <h2 id="scaling">How to Scale Up</h2>
+
+    <p>Large-scale RL for language models is one of the most exciting developments in modern AI. Yet current approaches have significant limitations that constrain where and how RL can be applied at scale.</p>
+
+    <h3 id="current-limitations">Current Limitations</h3>
+
+    <p>Current large-scale RL practice is either <strong>short-horizon</strong> or <strong>very online</strong>:</p>
+
+    <ul>
+      <li><strong>LLM preference optimization</strong> (e.g., RLHF, DPO) typically considers single-turn dialogues rather than full multi-turn conversation outcomes. This reduces the horizon of the RL problem, making it tractable but limiting the behaviors that can be optimized.</li>
+      <li><strong>LLM reasoning</strong> (e.g., as in DeepSeek-R1) relies on generating large numbers of online samples from the current model, interleaved with policy updates. This is feasible when sampling is cheap (text generation), but becomes prohibitively expensive when each sample requires physical interaction (robots) or human evaluation (dialogue systems).</li>
+    </ul>
+
+    <p>The central open question is: <strong>can we do large-scale RL with longer horizons and less online data?</strong></p>
+
+    <h3 id="value-functions-at-scale">Accurate Value Functions at Scale</h3>
+
+    <p>Algorithms like PPO use value functions primarily for <strong>reducing gradient variance</strong>&mdash;the value function baseline subtracts a state-dependent term from the reward-to-go, reducing the variance of policy gradient estimates. But for actor-critic algorithms that rely on value functions for <em>policy improvement</em> (not just variance reduction), the value function must be accurate enough to reliably rank different actions. Training accurate value functions at the scale of modern LLMs&mdash;where the state space is the space of all possible conversation histories&mdash;remains an open challenge.</p>
+
+    <h3 id="batch-online-rl">Batch Online RL</h3>
+
+    <p>In many applications, it is impractical to interleave model updates with data collection in a tight loop. Collecting dialogue data with real users, gathering robot experience on physical hardware, or running experiments in the real world all have latency and cost constraints that prevent the rapid iteration typical of online RL.</p>
+
+    <p>A more practical paradigm is <strong>batch online RL</strong>: alternate between collecting a large batch of data with the current policy and updating the model, potentially asynchronously. This paradigm brings new considerations&mdash;for example, the policy must be <em>expressive enough</em> to generate diverse data within each batch, ensuring sufficient coverage of the state-action space for meaningful policy improvement.</p>
+
+    <div class="callout definition">
+      <div class="callout-label">Definition</div>
+      <strong>Batch Online RL.</strong> A training paradigm that alternates between two phases: (1) collecting a large batch of trajectories using the current policy, and (2) performing one or more policy updates on the collected batch. Unlike fully online RL, data collection and model updates are decoupled, allowing for asynchronous and distributed implementations. Unlike offline RL, the data distribution is periodically refreshed with on-policy data.
+    </div>
+
+    <!-- Section 6: Safety in Safety-Critical Domains -->
+    <h2 id="safety">Safety in Safety-Critical Domains</h2>
+
+    <p>How should we approach AI development and testing in domains where failures can cause serious harm&mdash;medicine, autonomous driving, mental health counseling, legal and political discourse? This is not merely a technical question but a fundamental challenge at the intersection of engineering, ethics, and policy.</p>
+
+    <h3 id="formal-approaches">The Limits of Formal Guarantees</h3>
+
+    <p>Historically, safety in engineering has been approached through <strong>formal verification</strong> and <strong>probabilistic guarantees</strong>. A bridge is designed with safety factors; a flight control system is verified against a formal specification. But these approaches make assumptions about the operating conditions that will not hold in the open world. A self-driving car encounters situations that no specification anticipated. An AI counselor receives queries that no test suite covered.</p>
+
+    <p>It is generally impossible to guarantee safety across the countless scenarios encountered in open-world environments. Even human professionals&mdash;drivers, surgeons, pilots, politicians&mdash;make mistakes. The question is not whether an AI system will ever fail, but how to make failures rare, detectable, and recoverable.</p>
+
+    <h3 id="ml-for-safety">Large-Scale ML as a Safety Tool</h3>
+
+    <p>Arguably, large-scale machine learning is the most successful approach we have for handling open-world circumstances. ML systems can generalize to novel situations in ways that rule-based systems cannot. But training safe ML systems requires data about unsafe circumstances, and collecting such data can itself cause harm&mdash;a fundamental tension that has had serious real-world consequences.</p>
+
+    <p>Two promising research directions may help resolve this tension:</p>
+
+    <ol>
+      <li><strong>Learning about unsafe situations without expansive unsafe data:</strong> Can we develop methods that learn to recognize and avoid dangerous states using synthetic data, transfer from related domains, or prior knowledge about the structure of harm? Simulation provides one avenue, but simulating rare catastrophic events realistically is itself a major challenge.</li>
+      <li><strong>Safe exploration:</strong> Can an agent gradually explore new behaviors while maintaining safety constraints? This is the problem of <em>constrained RL</em>&mdash;maximizing performance subject to the constraint that certain catastrophic outcomes never (or almost never) occur. Balancing exploration (trying new things) with exploitation (sticking to known-safe behaviors) takes on a new urgency when the cost of a bad exploration step is high.</li>
+    </ol>
+
+    <div class="callout insight">
+      <div class="callout-label">Key Insight</div>
+      Safety in RL cannot be achieved through reward engineering alone. A negative reward for unsafe actions presupposes that the agent can recognize unsafe situations, which is precisely the hard problem. The most promising approaches combine multiple lines of defense: conservative initial policies, constrained optimization, human oversight during deployment, and continuous monitoring for distributional shift.
+    </div>
+
+    <!-- Section 7: Handling Inaccuracies and Hallucinations -->
+    <h2 id="inaccuracies">Handling Inaccuracies and Hallucinations</h2>
+
+    <p>When AI systems interact with humans&mdash;as chatbots, code assistants, or medical decision support tools&mdash;mistakes are inevitable. The question is how to handle them well. Recent evidence suggests that current AI systems are not well optimized for human-AI collaboration.</p>
+
+    <h3 id="human-ai-systems">Optimizing Human-AI Systems</h3>
+
+    <p>A striking finding reported by Rajpurkar and Topol (NYT, 2025; Goh et al., JAMA, 2024) illustrates the problem: when an AI system worked independently to diagnose patients, it achieved 92% accuracy. When physicians used the AI as an assistant, their combined accuracy was only 76%&mdash;barely better than the 74% they achieved without AI. The AI actually <em>degraded</em> the physicians' performance, likely because the interface did not effectively communicate the AI's confidence and reasoning.</p>
+
+    <p>This suggests that optimizing the AI model alone is insufficient. We need to optimize the <em>entire human-AI system</em>, including how the model communicates its uncertainty to the human decision-maker.</p>
+
+    <h3 id="calibration">Calibration and the RLHF Problem</h3>
+
+    <p>One crucial property for effective human-AI collaboration is <strong>calibration</strong>: when a model says it is 80% confident, it should be correct about 80% of the time. Well-calibrated models enable humans to make informed decisions about when to trust the AI and when to rely on their own judgment.</p>
+
+    <p>An important empirical finding is that <strong>RLHF post-training hurts model calibration</strong>. Pre-trained GPT-4 exhibits reasonably good calibration&mdash;its confidence scores correlate well with its actual accuracy across different confidence levels. After PPO-based RLHF training, this calibration degrades significantly. The model becomes overconfident, producing high-confidence predictions even when it is wrong. This is a fundamental tension: RLHF optimizes for human preference, and humans prefer confident-sounding answers, creating an incentive for the model to be overconfident.</p>
+
+    <div class="callout example">
+      <div class="callout-label">Example</div>
+      <strong>Calibration before and after RLHF.</strong> Consider a pre-trained language model that, when it assigns 70% confidence to an answer, is correct about 70% of the time. After RLHF training, the same model might assign 90% confidence to answers it is only correct about 70% of the time. A human using this model would over-trust its predictions, potentially making worse decisions than they would with a less confident but better-calibrated system. This is precisely the pattern observed with GPT-4 before and after PPO post-training (Tian et al., 2023; OpenAI, 2023).
+    </div>
+
+    <p>Possible solutions include training models to express uncertainty through <strong>verbalized confidence</strong> ("I'm about 60% sure that...") and listing multiple plausible answers rather than committing to a single response. These approaches preserve the benefits of RLHF-trained fluency while giving humans the uncertainty information they need.</p>
+
+    <h3 id="reliability">The Path to 99.99% Reliability</h3>
+
+    <p>When humans are not in the loop&mdash;fully autonomous systems&mdash;the bar for reliability becomes much higher. Getting from 90% to 99.99% reliability is a qualitatively different challenge from getting from 0% to 90%. Reinforcement learning is likely part of the solution, with promising results in some scenarios (Luo et al., 2024), but achieving near-perfect reliability in open-world environments remains one of the hardest unsolved problems in AI.</p>
+
+    <!-- Section 8: Evaluation of Generalist Systems -->
+    <h2 id="evaluation">Evaluation of Generalist Systems</h2>
+
+    <p>In supervised learning, evaluation is conceptually straightforward: measure accuracy on a held-out validation set drawn from the same distribution as the training data. In reinforcement learning, this approach fundamentally breaks down.</p>
+
+    <h3 id="offline-eval-problem">Why Offline Evaluation is Hard</h3>
+
+    <p>The core difficulty is that RL data is collected under a policy that <em>differs from the learned policy</em>. A held-out dataset collected by an old policy tells us about the performance of that old policy, not the new one. The new policy will visit different states, take different actions, and encounter different outcomes. Evaluating a policy on states it will actually visit requires running it in the real environment&mdash;but for many applications, this is exactly what we are trying to avoid before we are confident the policy is safe and effective.</p>
+
+    <p>This problem is <strong>exacerbated for generalist systems</strong> that must perform well across many conditions. A self-driving car must handle urban streets, highways, construction zones, rain, snow, night driving, and countless other scenarios. Evaluating performance across this combinatorial space through real-world testing alone is infeasible.</p>
+
+    <h3 id="eval-open-questions">Open Questions in Evaluation</h3>
+
+    <p>Two critical open questions define the frontier of RL evaluation research:</p>
+
+    <ol>
+      <li><strong>Can we develop offline metrics that at least rule out bad models?</strong> Even if we cannot precisely estimate a policy's real-world performance from offline data, can we develop metrics that reliably identify policies that will fail? Such conservative screening metrics would be enormously valuable for filtering candidate policies before expensive real-world evaluation.</li>
+      <li><strong>How should we select representative real-world scenarios for online evaluation?</strong> Given that we cannot test every possible scenario, which scenarios should we prioritize? This is a problem of <em>experimental design</em> for policy evaluation&mdash;a field that is currently far less developed than the policy optimization methods it should support.</li>
+    </ol>
+
+    <div class="callout insight">
+      <div class="callout-label">Key Insight</div>
+      Evaluation may be the most underappreciated bottleneck in deploying RL systems. We have powerful algorithms for training policies, but our ability to <em>verify</em> that those policies will work before deployment lags far behind. The evaluation gap is particularly severe for generalist systems, where the space of possible operating conditions is vast and the cost of failure is high. Developing reliable evaluation methodology is as important as developing better training algorithms.
+    </div>
+
+    <!-- Section 9: How to Do Research -->
+    <h2 id="research-methodology">How to Do (Deep RL) Research</h2>
+
+    <p>The second half of this lecture shifts from open technical problems to the practice of research itself. These insights are drawn from the instructor's own experience and are offered with the caveat that a diversity of research approaches is healthy&mdash;there is no single correct way to do research.</p>
+
+    <h3 id="research-realities">Some Realities</h3>
+
+    <p>Before discussing strategy, it is important to set realistic expectations about the research process:</p>
+
+    <ul>
+      <li><strong>Less than 1% of research ideas have lasting impact.</strong> Many ideas do not even lead to papers, and many papers have small impact. This is normal and should not be discouraging&mdash;the point is to calibrate expectations.</li>
+      <li><strong>Research is incremental.</strong> Even breakthroughs like AlphaFold built closely on decades of prior work (the CASP competition, advances in neural architectures, etc.). Genuinely novel ideas typically emerge from deep engagement with existing work.</li>
+      <li><strong>Simple ideas have more impact</strong> in a world where scale matters, because simple methods can be scaled more easily. Complexity is the enemy of impact.</li>
+    </ul>
+
+    <h3 id="what-to-work-on">What to Work On</h3>
+
+    <p>Choosing a research problem is a three-step process:</p>
+
+    <ol>
+      <li><strong>Find the intersection of an important problem and a feasible plan.</strong> Having only an important problem ("solve climate change") without a plan for how to make progress is not enough. Having only a clever technique ("an algorithm that improves robot success rate by 1%") without an important problem to apply it to is also insufficient. You need both.</li>
+      <li><strong>Check your excitement.</strong> Research is a tremendous amount of work. You will be far more successful&mdash;and far more persistent in the face of setbacks&mdash;if you are genuinely excited about the problem.</li>
+      <li><strong>Stress-test the idea honestly.</strong> If you are brutally honest about why the idea could fail to solve the problem, does it still have a high chance of working? If not, it probably will not work. The most common failure mode is optimism bias&mdash;convincing yourself that known difficulties will somehow resolve themselves.</li>
+    </ol>
+
+    <h3 id="idea-vs-problem">Idea-Driven versus Problem-Driven Research</h3>
+
+    <p>There are two fundamentally different orientations to research:</p>
+
+    <ul>
+      <li><strong>Idea-driven research:</strong> You start with a technique or insight and search for problems where it applies. The risk is that there may not exist an important problem that the idea solves. The goal is to get the idea to work.</li>
+      <li><strong>Problem-driven research:</strong> You start with an important problem and search for the best solution. This guarantees you are working on something that matters, but the resulting paper may be harder to write if the solution looks obvious in retrospect. The goal is to solve the problem.</li>
+    </ul>
+
+    <p>Problem-driven research has the advantage of guaranteeing that you are working on something important. And the advice not to box yourself into one area is important: crossing topic boundaries brings both new problems and new ideas. The instructor's own experience illustrates this&mdash;as a robotics researcher, they pivoted to developing a better video generation model when they discovered that existing models were inadequate for their robotics goals. The resulting paper became foundational to their later work and has over 1,300 citations.</p>
+
+    <h3 id="handling-risk">Handling Risk</h3>
+
+    <p>Given that most research ideas do not succeed, managing risk is essential:</p>
+
+    <ol>
+      <li><strong>Front-load the risk.</strong> Before building large-scale infrastructure, formulate and run small, targeted experiments that test the core unknowns. This is uncomfortable&mdash;it means confronting the possibility of failure early&mdash;but it is far better than discovering after months of engineering that the core idea does not work.</li>
+      <li><strong>Design targeted experiments</strong> that test unknowns in the fastest possible way. Every experiment should be designed to answer a specific question.</li>
+      <li><strong>Try many ideas</strong>&mdash;including different problems&mdash;to "create luck." The more shots on goal, the more likely one will succeed.</li>
+      <li><strong>Do not mentally commit</strong> to a project before seeing signs of life on the core unknown. Premature commitment leads to the sunk cost fallacy.</li>
+    </ol>
+
+    <h3 id="getting-things-to-work">Getting Things to Work</h3>
+
+    <p>When a research project is stuck, several strategies can help:</p>
+
+    <ul>
+      <li><strong>Start from something that works</strong> and make it incrementally harder. Do not try to solve the full problem all at once.</li>
+      <li><strong>Simplify.</strong> Remove components, reduce dimensionality, and isolate the essential difficulty.</li>
+      <li><strong>Talk to colleagues.</strong> Fresh perspectives often reveal blind spots.</li>
+      <li><strong>Revisit assumptions.</strong> Some of the things you believed at the start of the project may have been refuted by your experiments.</li>
+      <li><strong>Check if it "wants" to work.</strong> If the approach shows no signs of life at all, it likely will not lead to an impactful result. Consider reducing the project scope to the parts that do show promise.</li>
+    </ul>
+
+    <h3 id="when-to-pivot">Deciding When to Pivot</h3>
+
+    <p>The decision to abandon a project is often considered later than it should be, due to the <strong>sunk cost fallacy</strong>&mdash;the tendency to continue investing in a project because of the time already spent rather than because of its future prospects.</p>
+
+    <p>A useful reframing is to replace the binary decision ("continue or quit?") with a comparison: "continue working on this project" versus "work on project B" versus "work on project C." When framed as a choice among concrete alternatives rather than as giving up, the decision becomes less anxiety-inducing and more rational. This requires actively spending time thinking about alternative research projects, even when your current project is going well.</p>
+
+    <!-- Section 10: Sharing Research and Closing Thoughts -->
+    <h2 id="sharing-research">Sharing Research and Closing Thoughts</h2>
+
+    <h3 id="why-share">Why Sharing Matters</h3>
+
+    <p>The output of research is <em>ideas, knowledge, and learnings</em>&mdash;almost never a product or service. If no one knows about the learnings, then there was effectively no output. Even large companies invest heavily in marketing and communication; researchers should invest similarly in making their work accessible and visible.</p>
+
+    <p>Common objections to self-promotion in research are worth addressing directly:</p>
+
+    <ul>
+      <li>"It feels like self-promotion." &mdash; You are teaching people and sharing findings that they would benefit from knowing.</li>
+      <li>"The results did not work that well." &mdash; Negative results and partial successes are still valuable, as they save others from pursuing dead ends.</li>
+      <li>"It is all obvious to me now." &mdash; After months of deep engagement with a topic, you know far more than your audience. What seems obvious to you is often surprising and informative to others.</li>
+    </ul>
+
+    <h3 id="how-to-share">How to Share Effectively</h3>
+
+    <p>Effective communication of research requires deliberate practice:</p>
+
+    <ul>
+      <li><strong>Clear writing, visuals, and presentations.</strong> Invest time in figures that communicate your key ideas at a glance.</li>
+      <li><strong>Know your audience.</strong> When in doubt, assume they know less rather than more. Avoid jargon where possible&mdash;even experts appreciate refreshers on notation and terminology.</li>
+      <li><strong>Practice and get honest feedback.</strong> Presenting your work to people outside your immediate research group is invaluable for identifying gaps in your explanation.</li>
+      <li><strong>Break down writer's block.</strong> Start with pen-and-paper sketches of ideas, then build an outline. Think through your own ideas before turning to external tools for help&mdash;the process of articulating ideas is itself a form of thinking.</li>
+    </ul>
+
+    <h3 id="mentorship-confidence">Mentorship and Confidence</h3>
+
+    <p>Two final pieces of advice that apply broadly to any research career:</p>
+
+    <p><strong>Lean on mentorship.</strong> If you have access to experienced mentors, do not be afraid to use their guidance. Students often do best when learning gradually, and a good mentor can help calibrate ambition, identify blind spots, and provide perspective during setbacks.</p>
+
+    <p><strong>Build confidence deliberately.</strong> There are many reasons to lack confidence in research: no one knows the best way to do research right now, no one knows which work will be most impactful in the future, many ideas do not work, and many papers get rejected. Researchers who have been thinking about a domain for years will be "smarter" in that specific area, but that is a reflection of their experience, not their inherent ability&mdash;there is no reason to be intimidated. Self-doubt and overthinking can be significant obstacles to productivity and creativity.</p>
+
+    <div class="callout insight">
+      <div class="callout-label">Key Insight</div>
+      The combination of an important problem, a feasible approach, genuine excitement, and honest self-assessment provides a strong foundation for impactful research. The technical skills developed throughout this course&mdash;from MDPs and policy gradients to offline RL and sim-to-real transfer&mdash;are the tools. The open problems surveyed in this lecture are the opportunities. The research methodology discussed here is the map for navigating between them.
+    </div>
+
+    <!-- Section 11: Summary -->
+    <h2 id="summary">Course Summary</h2>
+
+    <p>This final lecture surveyed the frontier of deep reinforcement learning across seven open problem areas, then provided practical guidance on research methodology. The key open problems are:</p>
+
+    <ul>
+      <li><strong>Problem setup:</strong> Non-rewarding, non-verifiable domains where rewards are ambiguous, subjective, or absent&mdash;including LLM alignment, robotics, recommendation, and scientific reasoning.</li>
+      <li><strong>Leveraging prior data and knowledge:</strong> Going beyond weight initialization and buffer seeding to incorporate abstract knowledge, and enabling RL to transcend the performance ceiling of its training data.</li>
+      <li><strong>World models:</strong> Using video generation models and other learned dynamics models as sources of world knowledge for RL, while managing distribution shift and compounding prediction errors.</li>
+      <li><strong>Scaling:</strong> Training accurate value functions at the scale of modern LLMs, and developing batch online RL paradigms that decouple data collection from model updates.</li>
+      <li><strong>Safety:</strong> Learning about unsafe situations without expansive unsafe data, and enabling safe exploration in domains where failures carry real costs.</li>
+      <li><strong>Inaccuracies and hallucinations:</strong> Optimizing human-AI systems for effective collaboration, maintaining calibration through post-training, and achieving the extreme reliability needed for autonomous deployment.</li>
+      <li><strong>Evaluation:</strong> Developing offline metrics that can screen candidate policies, and designing representative evaluation scenarios for generalist systems operating in open-world environments.</li>
+    </ul>
+
+    <p>These challenges span the full pipeline from problem formulation to deployment, and solving them will require not just algorithmic innovation but also new evaluation frameworks, safety paradigms, and ways of integrating human judgment with automated optimization. The students of CS 224R are now well-equipped to begin tackling these problems.</p>
+
   </article>
 
   <nav class="lecture-nav">

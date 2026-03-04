@@ -46,14 +46,353 @@
       <span class="lecture-tag">Transfer Learning</span>
       <span class="lecture-tag">Guest Lecture</span>
     </div>
-    <a class="lecture-pdf-link" href="../slides/cs224r_2025_lecture17.pdf" target="_blank">
+    <a class="lecture-pdf-link" href="../slides/17_rl_for_robotics.pdf" target="_blank">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
       Original PDF slides
     </a>
   </div>
 
   <article class="lecture-article">
-    <!-- Content will be added in Phase 3 -->
+
+    <!-- Section 1: Reinforcement Learning for Robotics -->
+    <h2 id="rl-for-robotics">Reinforcement Learning for Robotics</h2>
+
+    <p>This guest lecture by <strong>Ashish Kumar</strong> (UC Berkeley) focuses on the application of reinforcement learning to robotics, with particular emphasis on the problem of transferring policies trained in simulation to real-world robots. The central thesis is that RL has achieved remarkable successes&mdash;from AlphaGo to reasoning in large language models&mdash;and the key enablers in every case are the same: <em>well-specified rewards</em> and <em>scalable evaluation of policies</em>.</p>
+
+    <p>Before diving into the robotics-specific content, it is useful to distinguish between two paradigms for learning behavior:</p>
+
+    <ul>
+      <li><strong>Imitation learning</strong> &mdash; used in vision-language models, video generation, and image segmentation. It relies heavily on off-policy data, learns from good examples, and tends to produce <em>generalist</em> policies.</li>
+      <li><strong>Reinforcement learning</strong> &mdash; used in game playing, reasoning, and robotics. It relies on on-policy data, learns from both good and bad experience, and tends to produce <em>specialist</em> policies optimized for specific tasks.</li>
+    </ul>
+
+    <p>Across the major RL success stories, a common pattern emerges. AlphaGo learned to exceed human capability in Go. DeepSeek-R1 used RL to incentivize coherent long-horizon reasoning in LLMs. And in robotics, RL has enabled unprecedented reliability and dexterity. In each case, the breakthrough required two ingredients: a reward signal that could be evaluated programmatically (or at scale), and a way to evaluate millions of policy rollouts cheaply.</p>
+
+    <div class="callout insight">
+      <div class="callout-label">Key Insight</div>
+      In robotics, the two prerequisites for RL success translate directly: <em>well-specified rewards</em> can be programmatically calculated from simulator state (e.g., distance to a goal, energy consumption, joint torques), and <em>scalable evaluation</em> is achieved through physics simulation. The challenge then becomes: how do we transfer a policy trained in simulation to the real world?
+    </div>
+
+    <!-- Section 2: The Simulation-to-Reality Gap -->
+    <h2 id="sim-to-real-gap">The Simulation-to-Reality Gap</h2>
+
+    <p>Simulation provides a compelling training ground for robot learning. Modern physics engines like IsaacGym can simulate thousands of robots in parallel on a single GPU, generating the massive amounts of on-policy experience that RL algorithms demand. Rewards can be computed from simulator state variables that would be difficult or impossible to measure on a physical robot&mdash;exact contact forces, ground-truth positions of every link, and precise terrain geometry.</p>
+
+    <p>However, simulation is an <em>approximation</em> of reality. The parameters of the simulated environment&mdash;friction coefficients, motor characteristics, masses, moments of inertia, terrain profiles&mdash;will inevitably differ from those of the real world. A policy that is optimal in simulation may fail catastrophically on the physical robot because it has learned to exploit dynamics that do not exist in reality, or has never encountered dynamics that do.</p>
+
+    <div class="callout definition">
+      <div class="callout-label">Definition</div>
+      <strong>Sim-to-Real Gap.</strong> The discrepancy between the dynamics of a physics simulator and the dynamics of the physical world. Formally, if the simulator dynamics are $\hat{p}(s_{t+1} \mid s_t, a_t; \phi_{\text{sim}})$ with parameters $\phi_{\text{sim}}$, and the real-world dynamics are $p^*(s_{t+1} \mid s_t, a_t; \phi^*)$ with true parameters $\phi^*$, then the sim-to-real gap arises because $\phi_{\text{sim}} \neq \phi^*$ and the simulator may not even capture all relevant physical phenomena.
+    </div>
+
+    <p>There have been three main approaches to bridging this gap, each with its own limitations:</p>
+
+    <ul>
+      <li><strong>Domain randomization</strong> &mdash; train a single robust policy across a wide distribution of simulator parameters. The hope is that if the policy works across many simulated environments, the real world will be "just another sample" from that distribution. This produces a conservative policy that may sacrifice performance for robustness.</li>
+      <li><strong>System identification</strong> &mdash; carefully measure the physical parameters of the real robot and calibrate the simulator to match. This can work well for rigid-body dynamics but becomes intractable for complex, changing environments (mud, ice, deformable objects).</li>
+      <li><strong>Fine-tuning at test time</strong> &mdash; deploy a pre-trained policy on the real robot and continue training with real-world data. This requires additional real-world interaction, which is expensive and potentially dangerous.</li>
+    </ul>
+
+    <p>The key contribution of this lecture is a fourth approach: <strong>rapid motor adaptation</strong>, which trains a policy that can <em>infer</em> the current environment parameters from its own sensory experience and adapt its behavior online, without any explicit system identification or fine-tuning.</p>
+
+    <!-- Section 3: Rapid Motor Adaptation -->
+    <h2 id="rma">Rapid Motor Adaptation (RMA)</h2>
+
+    <p>Rapid Motor Adaptation (RMA), developed by Kumar, Fu, Pathak, and Malik, introduces an architecture that enables a single policy to walk across diverse terrains and conditions by rapidly adapting to changes in the environment. The core idea is to decompose the problem into two parts: a <strong>base policy</strong> that maps the current state and an environment encoding to actions, and an <strong>adaptation module</strong> that estimates the environment encoding from recent sensory history.</p>
+
+    <h3 id="rma-architecture">The RMA Architecture</h3>
+
+    <p>During training in simulation, the environment is characterized by a set of <strong>extrinsic parameters</strong> $e$ that are known to the simulator but would be unavailable on the real robot:</p>
+
+    <ul>
+      <li>Mass and center of mass of the robot body</li>
+      <li>Friction coefficients of the ground surface</li>
+      <li>Terrain height profile</li>
+      <li>Motor strength and damping characteristics</li>
+    </ul>
+
+    <p>The architecture consists of two neural network modules:</p>
+
+    <ol>
+      <li><strong>Environmental Factor Encoder:</strong> A network that maps the extrinsic parameters $e$ to a compact latent vector $z_t \in \R^k$, capturing the aspects of the environment most relevant to locomotion.</li>
+      <li><strong>Base Policy:</strong> A network $\pi(a_t \mid x_t, a_{t-1}, z_t)$ that takes the current proprioceptive observation $x_t$ (joint positions, joint velocities, body orientation), the previous action $a_{t-1}$, and the environment encoding $z_t$, and outputs the action $a_t$ (target joint positions).</li>
+    </ol>
+
+    <div class="callout definition">
+      <div class="callout-label">Definition</div>
+      <strong>Environmental Factor Encoding.</strong> Given extrinsic parameters $e = (\text{mass}, \text{CoM}, \text{friction}, \text{terrain}, \text{motor strength}, \ldots)$, the environmental factor encoder $\mu$ produces a latent representation:
+      $$z_t = \mu(e)$$
+      The base policy then conditions on this encoding: $a_t = \pi(x_t, a_{t-1}, z_t)$. During training, $e$ is known from the simulator; during deployment, $z_t$ must be estimated from observation history.
+    </div>
+
+    <h3 id="reward-design">Reward Function Design</h3>
+
+    <p>The reward function for locomotion training is carefully designed to produce natural, energy-efficient, and hardware-safe gaits. It combines multiple terms organized into three categories:</p>
+
+    <ul>
+      <li><strong>Forward walking:</strong> Rewards for tracking a commanded forward velocity, penalizing deviation from the target speed.</li>
+      <li><strong>Energetics:</strong> Penalties on joint torques and joint power consumption, encouraging the policy to find energy-efficient gaits. These terms are inspired by biomechanics research on animal locomotion.</li>
+      <li><strong>Stability and hardware protection:</strong> Penalties on ground impact forces, excessive body roll and pitch, and sudden changes in action. These terms protect the physical hardware from damage and encourage smooth, stable gaits.</li>
+    </ul>
+
+    <div class="callout insight">
+      <div class="callout-label">Key Insight</div>
+      The reward function draws on principles from <em>biomechanics and energetics</em>. By penalizing work (torque times velocity) and ground impact forces, the policy discovers gaits that closely resemble those of real animals&mdash;not because it was told to imitate animals, but because energy-efficient locomotion under physical constraints converges to similar solutions across biological and artificial systems.
+    </div>
+
+    <!-- Section 4: Two-Phase Training -->
+    <h2 id="two-phase-training">Two-Phase Training</h2>
+
+    <p>RMA uses a two-phase training procedure, both conducted entirely in simulation. The key insight is that the adaptation module can be trained <em>after</em> the base policy, using the base policy's own experience as supervision.</p>
+
+    <h3 id="phase1">Phase 1: Training with Privileged Information</h3>
+
+    <p>In the first phase, both the environmental factor encoder $\mu$ and the base policy $\pi$ are trained jointly using PPO. The environment parameters $e$ are randomized at the start of each episode (domain randomization over masses, frictions, terrain types, motor characteristics), and the encoder has direct access to these parameters. This is <strong>privileged information</strong>&mdash;data that is available during training but not during deployment.</p>
+
+    <p>The resulting policy learns to condition its behavior on the environment encoding $z_t = \mu(e)$, adapting its gait to different surfaces, payloads, and terrain profiles. Because the encoder compresses the high-dimensional extrinsic parameters into a compact latent vector, the base policy effectively learns a family of behaviors parameterized by $z_t$.</p>
+
+    <h3 id="phase2">Phase 2: Learning to Estimate Extrinsics from History</h3>
+
+    <p>In the second phase, the base policy is <strong>frozen</strong>, and a new <strong>adaptation module</strong> $\hat{\mu}$ is trained to predict the environment encoding $z_t$ from a window of recent proprioceptive observations and actions:</p>
+
+    $$\hat{z}_t = \hat{\mu}(x_{t-H}, a_{t-H}, \ldots, x_{t-1}, a_{t-1})$$
+
+    <p>where $H$ is the history length (typically 50 timesteps). The adaptation module is trained to regress against the output of the privileged encoder: $\hat{z}_t \approx z_t = \mu(e)$. This is a supervised learning problem, with training data generated by rolling out the frozen base policy across randomized environments.</p>
+
+    <div class="callout example">
+      <div class="callout-label">Example</div>
+      <strong>How does the adaptation module work?</strong> Consider a robot walking on an icy surface. At each timestep, the robot commands a particular joint position, but the actual movement is smaller than expected because the feet are slipping. Over the recent history window, the adaptation module observes a systematic pattern: commanded actions consistently produce less forward motion than expected. From this discrepancy between expected and actual movement, the module infers a low-friction environment and produces a latent encoding $\hat{z}_t$ that causes the base policy to take wider, more cautious steps.
+    </div>
+
+    <div class="algorithm">
+      <div class="algorithm-title">Rapid Motor Adaptation (RMA) Training</div>
+      <p><strong>Phase 1 &mdash; Privileged Training:</strong></p>
+      <ol>
+        <li>Randomize environment parameters $e$ (mass, friction, terrain, motor strength)</li>
+        <li>Compute privileged encoding $z_t = \mu(e)$</li>
+        <li>Run base policy $\pi(a_t \mid x_t, a_{t-1}, z_t)$ in simulation</li>
+        <li>Update both $\mu$ and $\pi$ using PPO with multi-term reward</li>
+      </ol>
+      <p><strong>Phase 2 &mdash; Adaptation Module Training:</strong></p>
+      <ol>
+        <li>Freeze base policy $\pi$ and encoder $\mu$</li>
+        <li>Roll out frozen policy across randomized environments, collecting $(x_{t-H:t}, a_{t-H:t}, z_t)$ tuples</li>
+        <li>Train adaptation module $\hat{\mu}$ to minimize $\| \hat{\mu}(x_{t-H:t}, a_{t-H:t}) - \mu(e) \|^2$</li>
+      </ol>
+      <p><strong>Deployment:</strong> Run adaptation module at 10 Hz, base policy at 100 Hz. Only proprioceptive observations are needed.</p>
+    </div>
+
+    <!-- Section 5: Deployment and Real-World Adaptation -->
+    <h2 id="deployment">Deployment and Real-World Adaptation</h2>
+
+    <p>At deployment time, the environmental factor encoder is discarded entirely. Only the adaptation module and the base policy are deployed on the robot. The adaptation module runs at 10 Hz, consuming a sliding window of the last 50 proprioceptive observations and actions to produce the environment encoding $\hat{z}_t$. The base policy runs at 100 Hz, taking the most recent proprioceptive observation, the previous action, and the latest $\hat{z}_t$ to compute motor commands.</p>
+
+    <p>This architecture enables <strong>continuous online adaptation</strong>. As the robot transitions from one surface to another, or as an external perturbation is applied, the adaptation module detects the change in dynamics through the observation history and adjusts $\hat{z}_t$ accordingly. The base policy then modifies its gait to match the new conditions, all without any explicit system identification or parameter estimation.</p>
+
+    <h3 id="indoor-evaluation">Indoor Evaluation</h3>
+
+    <p>The RMA system was evaluated on a Unitree A1 quadruped robot in a variety of challenging indoor conditions designed to stress-test the adaptation mechanism:</p>
+
+    <ul>
+      <li><strong>Oily surfaces with plastic-wrapped feet:</strong> The robot's feet were wrapped in plastic and placed on an oily surface, drastically reducing friction. The adaptation module detected the low-friction condition and adjusted the gait to maintain stability.</li>
+      <li><strong>5 kg payload throw:</strong> While the robot was walking, a 5 kg payload (roughly 40% of the robot's body weight) was thrown onto its back. The adaptation module detected the sudden mass change and adjusted the joint torques and gait timing to compensate.</li>
+      <li><strong>Uneven planks:</strong> The robot walked across loose planks that shifted and tilted underfoot, creating constantly changing terrain. The adaptation module continuously updated its terrain estimate.</li>
+    </ul>
+
+    <h3 id="adaptation-analysis">Analysis of the Adaptation Module</h3>
+
+    <p>Inspection of the learned latent vectors reveals that the adaptation module captures physically meaningful quantities. When the robot encounters an oily surface, specific dimensions of $\hat{z}_t$ shift to values that correlate with reduced friction, and the corresponding knee torques increase to compensate. When a payload is thrown onto the robot, different latent dimensions respond, reflecting the mass change, and the torques across all legs increase to support the additional weight.</p>
+
+    <p>Quantitative comparisons show that RMA significantly outperforms both domain randomization (which produces overly conservative gaits) and policies without adaptation (which fail when the environment deviates from the training distribution). The adaptation mechanism provides the crucial ability to specialize behavior to the current conditions while maintaining the robustness provided by training across diverse environments.</p>
+
+    <div class="callout insight">
+      <div class="callout-label">Key Insight</div>
+      RMA's two-phase training can be viewed as a form of <em>privileged learning</em> or <em>teacher-student distillation</em>. The Phase 1 policy with access to ground-truth extrinsics is the "teacher." The Phase 2 adaptation module learns to replicate the teacher's conditioning signal using only information available at deployment time. This paradigm&mdash;train with privileged information, then distill into a deployable architecture&mdash;recurs throughout modern sim-to-real robotics.
+    </div>
+
+    <!-- Section 6: Vision-Based Locomotion -->
+    <h2 id="vision-locomotion">Vision-Based Locomotion</h2>
+
+    <p>Proprioceptive adaptation enables robust locomotion on flat and gently varying terrain, but for truly challenging environments&mdash;stairs, stepping stones, gaps, discrete obstacles&mdash;the robot needs to <em>see</em> where it is going. The question becomes: how should we incorporate vision into the locomotion policy?</p>
+
+    <h3 id="terrain-maps">The Problem with Terrain Maps</h3>
+
+    <p>The conventional approach in robotics is to build an explicit terrain map from sensor data (typically LiDAR or depth cameras), then plan footstep placements on this map. Systems like those described by Miki et al. (Science Robotics, 2022) and Kim et al. (ICRA, 2020) construct elevation maps of the surrounding terrain and feed them to a locomotion controller.</p>
+
+    <p>However, terrain maps constructed from real-world sensor data are extremely noisy. Depth sensors produce artifacts near edges, transparent surfaces, and in outdoor lighting conditions. The noise in the map can overwhelm the signal that the controller needs to make good decisions. As terrain difficulty increases, the signal-to-noise ratio deteriorates further, and map-based controllers can perform <em>worse</em> than blind controllers that rely solely on proprioception.</p>
+
+    <div class="callout insight">
+      <div class="callout-label">Key Insight</div>
+      An explicit terrain map is an intermediate representation that may introduce more noise than it removes. The key question Agarwal, Kumar, Malik, and Pathak asked was: <em>do we really need terrain maps?</em> Their answer was to bypass map construction entirely, tightly coupling vision and control in an end-to-end learned system.
+    </div>
+
+    <h3 id="egocentric-depth">Egocentric Depth: Tightly Coupling Vision and Control</h3>
+
+    <p>The egocentric depth approach, developed by Agarwal and Kumar et al., replaces terrain maps with raw egocentric depth images from a forward-facing camera mounted on the robot. The depth image is fed directly into the locomotion policy, which learns to extract the relevant terrain information end-to-end. This approach follows the same two-phase privileged learning paradigm as RMA.</p>
+
+    <h3 id="vision-phase1">Phase 1: Training with Privileged Terrain Information</h3>
+
+    <p>In the first phase, the policy is trained in simulation with access to privileged terrain information in the form of <strong>scandots</strong>&mdash;a dense grid of height measurements sampled at the robot's foot positions. The policy also has access to privileged extrinsic parameters (friction, payload). Two RNN modules encode these privileged inputs: one produces a terrain encoding $\gamma_t$ from the scandots $m_t$, and the other produces an environment encoding $z_t$ from the extrinsics $e_t$. A base policy MLP then maps $(o_t, \gamma_t, z_t)$ to actions, where $o_t$ is the proprioceptive observation.</p>
+
+    <p>Training uses PPO in IsaacGym across a rich curriculum of terrain types: stairs, slopes, rough flat ground, gaps, stepping stones, and discrete obstacles. The reward combines velocity tracking and energy minimization terms.</p>
+
+    <h3 id="vision-phase2">Phase 2: Distilling Vision from Privileged Information</h3>
+
+    <p>In the second phase, the Phase 1 policy is frozen, and a new student network is trained to produce the same terrain encoding $\hat{\gamma}_t$ and environment encoding $\hat{z}_t$ from egocentric depth images $d_t$ and proprioceptive history $o_{t-H:t}$. A depth encoder processes the egocentric depth image, and two RNN modules produce the estimated encodings. The student is trained by regression against the teacher's encodings.</p>
+
+    <p>The resulting deployment policy uses only egocentric depth and proprioception&mdash;both readily available on a physical robot. No terrain map is constructed at any stage.</p>
+
+    <div class="algorithm">
+      <div class="algorithm-title">Vision-Based Locomotion via Privileged Learning</div>
+      <p><strong>Phase 1 &mdash; Teacher Policy (Privileged):</strong></p>
+      <ol>
+        <li>Input: proprioception $o_t$, scandots $m_t$ (privileged), extrinsics $e_t$ (privileged)</li>
+        <li>Encode: $\gamma_t = \text{RNN}_\text{terrain}(m_t)$, $z_t = \text{RNN}_\text{env}(e_t)$</li>
+        <li>Policy: $a_t = \pi_1(o_t, \gamma_t, z_t)$</li>
+        <li>Train with PPO across diverse terrains in IsaacGym</li>
+      </ol>
+      <p><strong>Phase 2 &mdash; Student Policy (Deployable):</strong></p>
+      <ol>
+        <li>Input: proprioception $o_t$, egocentric depth $d_t$ (available on robot)</li>
+        <li>Encode: $\hat{\gamma}_t = \text{RNN}_\text{depth}(d_t)$, $\hat{z}_t = \text{RNN}_\text{prop}(o_{t-H:t})$</li>
+        <li>Train by regressing $\hat{\gamma}_t \to \gamma_t$ and $\hat{z}_t \to z_t$</li>
+        <li>Deploy: $a_t = \pi_1(o_t, \hat{\gamma}_t, \hat{z}_t)$ using frozen Phase 1 base policy</li>
+      </ol>
+    </div>
+
+    <!-- Section 7: Results and Emergent Behaviors -->
+    <h2 id="results-emergent">Results and Emergent Behaviors</h2>
+
+    <p>The egocentric depth locomotion system was evaluated on an A1 quadruped navigating environments that are particularly challenging for small robots. Standard staircases, for example, have a 17 cm rise and 26 cm run&mdash;dimensions designed for human legs, not for a small quadruped whose leg length is comparable to the stair height.</p>
+
+    <h3 id="quantitative-results">Quantitative Performance</h3>
+
+    <p>The system was compared against two baselines across four terrain types, measuring average distance traversed before failure:</p>
+
+    <table style="width:100%; border-collapse: collapse; margin: 1.5em 0;">
+      <thead>
+        <tr style="border-bottom: 2px solid var(--border);">
+          <th style="text-align:left; padding: 0.5em;">Terrain</th>
+          <th style="text-align:center; padding: 0.5em;">Blind (proprioception only)</th>
+          <th style="text-align:center; padding: 0.5em;">Map-Based</th>
+          <th style="text-align:center; padding: 0.5em;">Egocentric Depth (ours)</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr style="border-bottom: 1px solid var(--border);">
+          <td style="padding: 0.5em;">Slopes</td>
+          <td style="text-align:center; padding: 0.5em;">34.72</td>
+          <td style="text-align:center; padding: 0.5em;">36.14</td>
+          <td style="text-align:center; padding: 0.5em;"><strong>43.98</strong></td>
+        </tr>
+        <tr style="border-bottom: 1px solid var(--border);">
+          <td style="padding: 0.5em;">Stepping Stones</td>
+          <td style="text-align:center; padding: 0.5em;">1.02</td>
+          <td style="text-align:center; padding: 0.5em;">1.09</td>
+          <td style="text-align:center; padding: 0.5em;"><strong>18.83</strong></td>
+        </tr>
+        <tr style="border-bottom: 1px solid var(--border);">
+          <td style="padding: 0.5em;">Stairs</td>
+          <td style="text-align:center; padding: 0.5em;">16.64</td>
+          <td style="text-align:center; padding: 0.5em;">6.74</td>
+          <td style="text-align:center; padding: 0.5em;"><strong>31.24</strong></td>
+        </tr>
+        <tr style="border-bottom: 1px solid var(--border);">
+          <td style="padding: 0.5em;">Discrete Obstacles</td>
+          <td style="text-align:center; padding: 0.5em;">32.41</td>
+          <td style="text-align:center; padding: 0.5em;">29.08</td>
+          <td style="text-align:center; padding: 0.5em;"><strong>40.13</strong></td>
+        </tr>
+      </tbody>
+    </table>
+
+    <p>Two patterns stand out. First, the egocentric depth approach dominates across all terrain types. Second, the performance gap grows dramatically as terrain difficulty increases. On stepping stones, the egocentric method travels 18 times further than either baseline. On stairs, the map-based method actually performs <em>worse</em> than blind locomotion&mdash;noisy depth maps near stair edges actively mislead the controller.</p>
+
+    <h3 id="emergent-behaviors">Emergent Behaviors</h3>
+
+    <p>One of the most striking findings is the emergence of sophisticated locomotion strategies that were never explicitly programmed. Because no predefined gait is imposed, the policy discovers several remarkable behaviors:</p>
+
+    <ul>
+      <li><strong>Hip abduction on stairs:</strong> When climbing stairs whose dimensions exceed the robot's nominal stride length, the policy learns to splay its legs outward (hip abduction), effectively widening its base of support. This closely resembles strategies used by animals navigating challenging terrain.</li>
+      <li><strong>Emergent footstep planning:</strong> The policy implicitly plans footstep placements multiple steps ahead, positioning its feet to ensure stability through sequences of obstacles rather than greedily optimizing each individual step.</li>
+      <li><strong>Gait-free locomotion:</strong> Rather than using a fixed gait pattern (trot, gallop, etc.), the policy dynamically adjusts its gait in response to terrain&mdash;walking cautiously on uneven ground, trotting on flat sections, and using entirely novel footfall patterns on stairs.</li>
+    </ul>
+
+    <div class="callout insight">
+      <div class="callout-label">Key Insight</div>
+      The egocentric depth approach is both <em>map-free</em> and <em>gait-free</em>. By tightly coupling perception and control in an end-to-end learned system, the policy discovers locomotion strategies that would be extremely difficult to engineer by hand. The terrain information is never explicitly represented as a map&mdash;it is implicitly encoded in the latent representations learned by the depth encoder.
+    </div>
+
+    <!-- Section 8: Beyond Locomotion -->
+    <h2 id="beyond-locomotion">Beyond Locomotion: Dexterous Manipulation and Flight</h2>
+
+    <p>The privileged-learning and rapid-adaptation paradigm is not limited to legged locomotion. The same principles have been successfully applied to other domains in robotics.</p>
+
+    <h3 id="dexterous-manipulation">In-Hand Dexterous Manipulation</h3>
+
+    <p>Qi et al. (CoRL 2022) applied rapid motor adaptation to in-hand object rotation using a multi-fingered robot hand. The task is to continuously rotate an object held in the hand&mdash;a dexterity benchmark that requires precise contact management.</p>
+
+    <p>The system generalizes across objects with dramatically different physical properties:</p>
+
+    <ul>
+      <li><strong>Weight:</strong> Objects ranging from 5 g to 198 g</li>
+      <li><strong>Coefficient of friction:</strong> From very slippery to highly grippy surfaces</li>
+      <li><strong>Center of mass:</strong> Both above and below the finger contact points</li>
+      <li><strong>Shape:</strong> Cubes, cylinders, and even cups</li>
+    </ul>
+
+    <p>The adaptation module uses proprioceptive history for <strong>implicit contact detection</strong>. When a finger is in contact with the object, the measured joint position deviates from the commanded action (because the object resists the finger's motion). When there is no contact, the joint position closely tracks the commanded action. By observing these discrepancies across the history window, the adaptation module infers which fingers are currently in contact and adjusts the manipulation strategy accordingly&mdash;all without any explicit tactile sensors.</p>
+
+    <div class="callout example">
+      <div class="callout-label">Example</div>
+      <strong>Proprioceptive contact detection.</strong> Consider the pinky finger of a robot hand during in-hand object rotation. When the pinky is in contact with the object, the measured joint position lags behind the commanded action because the object pushes back against the finger. When the pinky is not in contact, the joint position closely matches the action. The adaptation module learns to detect these patterns across all fingers simultaneously, building an implicit model of the current contact configuration without any dedicated contact sensors.
+    </div>
+
+    <h3 id="drone-flight">Agile Drone Flight</h3>
+
+    <p>The same rapid adaptation framework has also been applied to drone flight, where the environment parameters that must be adapted to include wind conditions, payload mass, and aerodynamic effects. The drone's adaptation module estimates these factors from the discrepancy between commanded thrust/torque and observed accelerations, enabling stable flight even under conditions not seen during simulation training.</p>
+
+    <!-- Section 9: Open Challenges -->
+    <h2 id="open-challenges">Open Challenges and Future Directions</h2>
+
+    <p>Despite the impressive results demonstrated in this lecture, several fundamental challenges remain in RL for robotics.</p>
+
+    <h3 id="humanoids">Humanoid Robots</h3>
+
+    <p>Extending these techniques to humanoid robots is an active frontier. Humanoids have far more degrees of freedom than quadrupeds, making the locomotion problem significantly harder. The balance requirements are more stringent (bipedal balance on two feet versus quadrupedal stability on four), and the diversity of tasks a humanoid must perform&mdash;walking, climbing, manipulating objects, navigating human environments&mdash;is much broader.</p>
+
+    <h3 id="sim-technology">Simulation Technology</h3>
+
+    <p>Current simulation technology, while powerful, remains primitive in important respects. Many real-world phenomena&mdash;deformable objects, fluids, granular media, soft contacts&mdash;can be modeled in simulation but at prohibitive computational cost. Rich Sutton's "bitter lesson" suggests that the answer is to bet on compute: general methods that leverage increasing computational resources tend to dominate hand-engineered approaches over the long run. The implication for robotics simulation is that investing in more powerful and general-purpose simulators will eventually pay larger dividends than clever engineering of specific simulation shortcuts.</p>
+
+    <h3 id="general-rewards">General Reward Models</h3>
+
+    <p>The reward functions in the systems described in this lecture were hand-designed for specific tasks. A major open question is whether large pre-trained models (foundation models trained for general understanding) can serve as general-purpose reward functions for robotics. This is appealing because such models encode rich world knowledge, but RL will ruthlessly exploit any weaknesses in the reward model&mdash;a phenomenon known as <em>reward hacking</em>. As a worst case, if automated reward models prove unreliable, human labeling of robot behavior remains a viable fallback, though an expensive one.</p>
+
+    <h3 id="superhuman">Superhuman Capabilities</h3>
+
+    <p>Perhaps the most exciting long-term direction is achieving superhuman robotic capabilities. The lesson from AlphaGo is instructive: a combination of sparse reward and extensive search enabled the discovery of strategies that no human had ever conceived. Can the same approach yield robots that exceed human capability in physical tasks? Achieving this would require scalable search (or exploration) in the space of physical behaviors&mdash;a much harder problem than search in a board game, but one where the potential impact is enormous.</p>
+
+    <div class="callout insight">
+      <div class="callout-label">Key Insight</div>
+      The key enablers for RL in robotics&mdash;programmatic rewards and simulation-based evaluation&mdash;are both rapidly improving. As physics simulators become faster and more accurate, as GPU compute continues to scale, and as foundation models become more capable of providing reward signals, the range of robotic tasks amenable to RL will expand dramatically. The sim-to-real techniques described in this lecture provide the bridge that makes simulation-trained intelligence deployable in the physical world.
+    </div>
+
+    <!-- Section 10: Summary -->
+    <h2 id="summary">Summary</h2>
+
+    <p>This lecture presented a principled approach to the sim-to-real transfer problem in robot learning, organized around the idea of <strong>rapid motor adaptation</strong>. The key takeaways are:</p>
+
+    <ul>
+      <li><strong>The two ingredients for RL success in robotics</strong> are well-specified rewards (computable from simulator state) and scalable policy evaluation (through massively parallel physics simulation).</li>
+      <li><strong>Rapid Motor Adaptation (RMA)</strong> bridges the sim-to-real gap by training a base policy with privileged environment information, then distilling an adaptation module that estimates the same information from proprioceptive history. The adaptation module runs online, enabling the robot to continuously adjust to changing conditions.</li>
+      <li><strong>Egocentric depth locomotion</strong> extends this paradigm to vision, replacing noisy terrain maps with end-to-end learned depth processing. The resulting system is both map-free and gait-free, discovering emergent locomotion strategies that outperform engineered baselines.</li>
+      <li><strong>The privileged learning paradigm</strong>&mdash;train with information available only in simulation, then distill into a deployable architecture&mdash;is broadly applicable beyond locomotion, with demonstrated success in dexterous manipulation and drone flight.</li>
+      <li><strong>Open challenges</strong> include scaling to humanoid robots, improving simulation fidelity, developing general reward models, and ultimately achieving superhuman physical capabilities.</li>
+    </ul>
+
+    <p>In the final lecture, we will step back to survey the broader landscape of open problems and future directions in deep reinforcement learning, covering challenges in reward specification, scaling, safety, evaluation, and the practice of RL research itself.</p>
+
   </article>
 
   <nav class="lecture-nav">

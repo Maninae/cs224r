@@ -46,14 +46,347 @@
       <span class="lecture-tag">Reward Signals</span>
       <span class="lecture-tag">Deep RL</span>
     </div>
-    <a class="lecture-pdf-link" href="../slides/cs224r_2025_lecture1.pdf" target="_blank">
+    <a class="lecture-pdf-link" href="../slides/01_cs224r_intro_2025.pdf" target="_blank">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
       Original PDF slides
     </a>
   </div>
 
   <article class="lecture-article">
-    <!-- Content will be added in Phase 3 -->
+
+    <!-- Section 1: What is Deep RL? -->
+    <h2 id="what-is-deep-rl">What Is Deep Reinforcement Learning?</h2>
+
+    <p><strong>Deep reinforcement learning</strong> sits at the intersection of two powerful ideas: <em>reinforcement learning</em>, the study of how agents learn to make sequential decisions from experience, and <em>deep learning</em>, the use of deep neural networks as flexible function approximators. Together, they provide a framework for tackling problems where a system must make <em>multiple</em> decisions over time based on a stream of information&mdash;observing, taking an action, observing again, taking another action, and so on.</p>
+
+    <p>More precisely, CS 224R studies both <strong>sequential decision-making problems</strong> and the <strong>solutions</strong> to those problems. The course covers a broad set of methods:</p>
+
+    <ul>
+      <li><strong>Imitation learning</strong> &mdash; learning behavior by mimicking expert demonstrations</li>
+      <li><strong>Model-free and model-based RL</strong> &mdash; learning from reward signals, with or without a learned dynamics model</li>
+      <li><strong>Offline and online RL</strong> &mdash; learning from pre-collected datasets versus learning through active interaction</li>
+      <li><strong>Multi-task and meta-RL</strong> &mdash; generalizing behavior across tasks and learning to learn</li>
+      <li><strong>RL for LLMs</strong> &mdash; using reinforcement learning to fine-tune large language models</li>
+      <li><strong>RL for robots</strong> &mdash; applying deep RL to physical manipulation and locomotion</li>
+    </ul>
+
+    <p>The emphasis throughout is on solutions that <em>scale to deep neural networks</em>&mdash;methods that can handle high-dimensional observations like images, complex continuous action spaces, and the kinds of large-scale training pipelines used in modern AI systems.</p>
+
+    <div class="callout definition">
+      <div class="callout-label">Definition</div>
+      <strong>Deep Reinforcement Learning.</strong> A family of methods for solving sequential decision-making problems in which an agent interacts with an environment, receives reward signals, and uses deep neural networks to represent and optimize its behavior (policy), its estimate of future rewards (value function), and/or its model of the environment (dynamics model).
+    </div>
+
+    <h3 id="rl-vs-supervised">How Does Deep RL Differ from Supervised Learning?</h3>
+
+    <p>In standard <strong>supervised learning</strong>, we are given a dataset of labeled input-output pairs $\{(x_i, y_i)\}$ and learn a function $f(x) \approx y$. Two key properties make this setting tractable: (1) the learner is <em>directly told</em> what to output for each input, and (2) the data points are typically assumed to be <em>independently and identically distributed</em> (i.i.d.).</p>
+
+    <p>In <strong>reinforcement learning</strong>, neither of these properties holds. Instead of learning a mapping from inputs to labels, we learn a <em>behavior</em> $\pi(a \mid s)$&mdash;a policy that maps states (or observations) to actions. The key differences are:</p>
+
+    <ul>
+      <li><strong>Indirect feedback:</strong> The agent is not told which action is correct. Instead, it receives a scalar reward signal after acting, and must figure out which actions led to good outcomes.</li>
+      <li><strong>Non-i.i.d. data:</strong> The agent's actions $a$ affect future observations. The data the agent sees depends on the decisions it has already made, creating complex dependencies that violate the i.i.d. assumption.</li>
+    </ul>
+
+    <p>The scope of "behavior" in RL is remarkably broad. It encompasses motor control for robots, dialogue generation for chatbots, strategic play in complex games, driving decisions for autonomous vehicles, and action sequences for web agents&mdash;essentially any setting where an intelligent system must make a sequence of choices.</p>
+
+    <div class="callout insight">
+      <div class="callout-label">Key Insight</div>
+      The core distinction between supervised learning and RL is that in RL, the agent's predictions have <em>consequences</em>. An action taken now changes the future state of the world, which changes what the agent will observe and what options will be available later. This creates a feedback loop that supervised learning does not account for.
+    </div>
+
+    <!-- Section 2: Why Study Deep RL? -->
+    <h2 id="why-deep-rl">Why Study Deep Reinforcement Learning?</h2>
+
+    <p>There are four compelling reasons to study deep RL, ranging from practical deployment to fundamental scientific questions.</p>
+
+    <h3 id="beyond-supervised">1. Going Beyond Supervised $(x, y)$ Examples</h3>
+
+    <p>Decision-making problems are everywhere, and they do not fit neatly into the supervised learning paradigm. Several situations demand an RL perspective:</p>
+
+    <ul>
+      <li><strong>AI agents of all kinds:</strong> Robots, autonomous vehicles, and web assistants must make sequential decisions in dynamic environments.</li>
+      <li><strong>Systems that interact with people:</strong> Chatbots and recommender systems operate in a loop with users, where each response shapes the conversation or the user's future behavior.</li>
+      <li><strong>Feedback loops:</strong> When deploying an AI system affects future outcomes and observations&mdash;for example, a content recommendation algorithm that shapes what users want to see next&mdash;supervised learning's static assumptions break down.</li>
+      <li><strong>Non-differentiable or non-standard objectives:</strong> When you lack labels entirely, or your objective is not simple prediction accuracy (and may not even be differentiable), RL lets you learn from <em>any</em> objective that can be expressed as a reward signal.</li>
+    </ul>
+
+    <h3 id="widely-deployed">2. Widely Used and Deployed for Performant AI Systems</h3>
+
+    <p>Deep RL is not a purely academic pursuit&mdash;it powers some of the most impressive AI systems in production today. The range of successful applications is striking:</p>
+
+    <ul>
+      <li><strong>Legged robotics:</strong> Companies like Unitree use RL-trained policies for both quadruped and humanoid locomotion, enabling robots to walk, run, and navigate complex terrain.</li>
+      <li><strong>Robot manipulation:</strong> Physical Intelligence's $\pi_0$ system and Google's Gemini Robotics use deep RL to learn dexterous manipulation tasks&mdash;folding laundry, clearing tables, and handling novel objects.</li>
+      <li><strong>Complex games:</strong> DeepMind's AlphaGo achieved superhuman performance in Go, with its famous "Move 37" in the match against Lee Sedol surprising expert commentators&mdash;a move no human would have considered, showcasing RL's ability to <em>discover new solutions</em>.</li>
+      <li><strong>Language models:</strong> Nearly all modern language models&mdash;ChatGPT, Claude, Gemini, DeepSeek, and others&mdash;use some form of RL for post-training, especially for developing advanced reasoning capabilities.</li>
+      <li><strong>Traffic control:</strong> Research on RL-based vehicular control shows significant improvements in traffic flow optimization.</li>
+      <li><strong>Generative image models:</strong> RL can train diffusion models to better follow text prompts, improving alignment between generated images and user intent.</li>
+      <li><strong>Chip design:</strong> Google used RL to design the floorplan of production TPU chips, with an agent that sequentially places circuit macros to minimize wirelength, congestion, and density.</li>
+    </ul>
+
+    <h3 id="fundamental-intelligence">3. Fundamental to Intelligence</h3>
+
+    <p>Learning from experience seems to be a core component of intelligence&mdash;both natural and artificial. RL enables the ability to <em>get better with practice</em>. Early robotics work by Levine et al. (ICRA 2015, JMLR 2016) demonstrated this vividly: a robot that initially could not perform basic manipulation tasks learned, through repeated practice, to insert shaped blocks into matching holes&mdash;first without vision (using only proprioceptive feedback), then using raw camera images as input. This kind of autonomous skill acquisition through trial and error is something that no amount of supervised training can achieve on its own.</p>
+
+    <h3 id="open-problems">4. Plenty of Exciting Open Research Problems</h3>
+
+    <p>Despite its successes, deep RL still has major open challenges that represent active areas of research:</p>
+
+    <ul>
+      <li><strong>Reward learning:</strong> How does an agent learn to represent what is good or bad for a task, without hand-designed reward functions?</li>
+      <li><strong>Generalization at scale:</strong> How can an agent generalize its behavior to many different scenarios? This motivates <em>offline RL</em> (leveraging large, diverse datasets) and <em>multitask/meta-RL</em> (transferring from other tasks and goals).</li>
+      <li><strong>Long-horizon tasks:</strong> Can RL learn complex, multi-step behaviors like cooking a meal? This connects to hierarchy and reasoning.</li>
+      <li><strong>Autonomous practice:</strong> Can robots practice fully autonomously without human resets between episodes? This is the problem of <em>reset-free RL</em>.</li>
+    </ul>
+
+    <p>A humorous but telling illustration from the early days: behind the scenes of RL robotics experiments, a human researcher ("Yevgen") was often doing more work than the robot&mdash;manually resetting objects, monitoring training, and intervening when things went wrong. Making this process scalable and autonomous remains an important goal.</p>
+
+    <!-- Section 3: Representing Experience as Data -->
+    <h2 id="experience-as-data">Representing Experience as Data</h2>
+
+    <p>Before we can formalize the RL problem mathematically, we need a vocabulary for describing the data that arises from sequential decision making. Every RL problem involves an agent interacting with an environment over discrete time steps, and we describe this interaction using a small set of core quantities.</p>
+
+    <div class="callout definition">
+      <div class="callout-label">Definition</div>
+      <strong>Core quantities in RL.</strong>
+      <ul>
+        <li><strong>State $s_t$</strong> &mdash; the complete state of the "world" at time $t$. Contains all information needed to predict the future.</li>
+        <li><strong>Observation $o_t$</strong> &mdash; what the agent actually observes at time $t$. Used when the agent does not have access to the full state (the <em>partially observed</em> setting).</li>
+        <li><strong>Action $a_t$</strong> &mdash; the decision taken by the agent at time $t$.</li>
+        <li><strong>Trajectory $\tau$</strong> &mdash; a sequence of states (or observations) and actions: $(s_1, a_1, s_2, a_2, \ldots, s_T, a_T)$. A trajectory could be as short as $T = 1$.</li>
+        <li><strong>Reward function $r(s, a)$</strong> &mdash; a scalar signal indicating how good it is to be in state $s$ and take action $a$.</li>
+      </ul>
+    </div>
+
+    <p>These quantities are highly flexible and can represent a wide variety of problems. The specific meaning of "state," "action," and "reward" varies enormously depending on the domain.</p>
+
+    <div class="callout example">
+      <div class="callout-label">Example</div>
+      <strong>Robot towel hanging.</strong> Consider a robot arm learning to hang a towel on a hook.
+      <ul>
+        <li><strong>State $s$:</strong> RGB camera images, joint positions, and joint velocities.</li>
+        <li><strong>Action $a$:</strong> Commanded next joint position (a continuous vector).</li>
+        <li><strong>Trajectory $\tau$:</strong> A 10-second sequence of camera frames, joint readings, and motor commands at 20 Hz, giving $(s_1, a_1, s_2, a_2, \ldots, s_T, a_T)$ with $T = 200$.</li>
+        <li><strong>Reward $r(s, a)$:</strong> $1$ if the towel is on the hook in state $s$, and $0$ otherwise.</li>
+      </ul>
+    </div>
+
+    <div class="callout example">
+      <div class="callout-label">Example</div>
+      <strong>Chatbot.</strong> Consider a conversational AI system.
+      <ul>
+        <li><strong>Observation $o$:</strong> The user's most recent message (the agent does not see the user's full internal state, so this is a partially observed setting).</li>
+        <li><strong>Action $a$:</strong> The chatbot's next message (a sequence of tokens).</li>
+        <li><strong>Trajectory $\tau$:</strong> A variable-length conversation trace $(o_1, a_1, o_2, a_2, \ldots, o_T, a_T)$.</li>
+        <li><strong>Reward $r(s, a)$:</strong> $+1$ if the user gives an upvote, $-10$ if the user downvotes, $0$ if there is no user feedback.</li>
+      </ul>
+    </div>
+
+    <p>Notice how different these two examples are in their specifics&mdash;continuous physical control versus discrete text generation, fixed-length versus variable-length trajectories, dense versus sparse rewards&mdash;yet the same abstract framework applies to both.</p>
+
+    <!-- Section 4: States, Observations, and the Markov Property -->
+    <h2 id="markov-property">States, Observations, and the Markov Property</h2>
+
+    <p>A critical distinction in RL is between <strong>states</strong> and <strong>observations</strong>. The state $s_t$ is the complete description of the world at time $t$, containing all information necessary to predict what happens next. The observation $o_t$ is what the agent actually sees, which may be an incomplete or noisy view of the true state.</p>
+
+    <p>The key structural property that makes sequential decision-making tractable is the <strong>Markov property</strong>: the next state depends only on the current state and action, not on the full history of past states and actions.</p>
+
+    <div class="callout definition">
+      <div class="callout-label">Definition</div>
+      <strong>Markov Property.</strong> A state $s_t$ satisfies the Markov property if the transition dynamics depend only on the current state and action:
+      $$p(s_{t+1} \mid s_t, a_t) \quad \text{is independent of } s_{t-1}, s_{t-2}, \ldots, s_1$$
+      In other words, the current state is a <em>sufficient statistic</em> for predicting the future: $p(s_{t+1} \mid s_t, a_t) = p(s_{t+1} \mid s_1, a_1, \ldots, s_t, a_t)$.
+    </div>
+
+    <p>The graphical model for this structure has states $s_1 \to s_2 \to s_3 \to \cdots$ forming a chain, with observations $o_t$ depending on state $s_t$, and actions $a_t$ depending on the observation. The crucial feature is that the arrows between states form a chain: $s_{t+1}$ depends on $s_t$ and $a_t$, but is conditionally independent of all earlier states given $s_t$.</p>
+
+    <p>When the agent can observe the full state ($o_t = s_t$), we have a <strong>fully observed</strong> setting. When the agent only sees partial information about the state, we have a <strong>partially observed</strong> setting. In the partially observed case, the agent must either maintain some form of memory (e.g., a recurrent neural network or a history of recent observations) or accept that its decisions will be based on incomplete information.</p>
+
+    <div class="callout insight">
+      <div class="callout-label">Key Insight</div>
+      The Markov property is a property of the <em>state representation</em>, not of the underlying physical system. Any system can be made Markov by including enough information in the state. The practical question is whether a compact, tractable state representation exists that is "Markov enough" for good decision-making.
+    </div>
+
+    <!-- Section 5: The Policy -->
+    <h2 id="policies">Policies: Representing Behavior</h2>
+
+    <p>A <strong>policy</strong> $\pi$ is the agent's decision-making rule&mdash;it determines how the agent selects actions based on what it observes. In deep RL, the policy is typically parameterized by a neural network with parameters $\theta$, written $\pi_\theta$.</p>
+
+    <p>The agent's interaction loop with the environment proceeds as follows:</p>
+
+    <ol>
+      <li><strong>Observe</strong> state $s_t$ (or observation $o_t$).</li>
+      <li><strong>Take action</strong> $a_t$, e.g., by sampling from the policy: $a_t \sim \pi_\theta(\cdot \mid s_t)$.</li>
+      <li><strong>Observe next state</strong> $s_{t+1}$, sampled from the unknown world dynamics $p(\cdot \mid s_t, a_t)$.</li>
+      <li>Repeat, producing a <strong>trajectory</strong> $s_1, a_1, s_2, a_2, \ldots, s_T, a_T$, also called a <strong>policy roll-out</strong> or an <strong>episode</strong>.</li>
+    </ol>
+
+    <p>In the fully observed case, the policy is a conditional distribution $\pi_\theta(a \mid s)$. In the partially observed case, where the agent only sees observations $o_t$ rather than full states, we give the policy <strong>memory</strong> by conditioning on a window of recent observations:</p>
+
+    $$\pi_\theta(a_t \mid o_{t-m}, \ldots, o_t)$$
+
+    <p>This can be implemented with recurrent networks, transformers, or simply by stacking recent observations as input. The network architecture maps the state (e.g., an image processed by convolutional layers, followed by fully connected layers) to a distribution over actions.</p>
+
+    <h3 id="stochastic-policies">Why Stochastic Policies?</h3>
+
+    <p>You might wonder why we define the policy as a probability distribution $\pi_\theta(a \mid s)$ over actions rather than a deterministic mapping $a = f_\theta(s)$. There are two important reasons:</p>
+
+    <ol>
+      <li><strong>Exploration:</strong> To learn from its own experience, the agent must try different things. A deterministic policy would always take the same action in a given state, never discovering potentially better alternatives. Stochasticity provides a natural mechanism for exploration.</li>
+      <li><strong>Modeling stochastic behavior:</strong> Real-world data often exhibits varying behaviors&mdash;different human demonstrators may take different actions in the same situation. A stochastic policy can capture this variability.</li>
+    </ol>
+
+    <p>This connection to <strong>generative modeling</strong> is powerful: a policy $\pi_\theta(a \mid s)$ is simply a conditional generative model over actions given states or observations. All the tools from modern generative modeling&mdash;normalizing flows, diffusion models, autoregressive models&mdash;can be brought to bear on learning policies.</p>
+
+    <!-- Section 6: The RL Objective -->
+    <h2 id="rl-objective">The Reinforcement Learning Objective</h2>
+
+    <p>With the concepts of states, actions, rewards, and policies in hand, we can now state the goal of reinforcement learning precisely.</p>
+
+    <h3 id="sum-of-rewards">Maximizing the Sum of Rewards</h3>
+
+    <p>The most natural objective is to choose a policy that maximizes the total reward accumulated over a trajectory:</p>
+
+    $$\max \sum_{t=1}^{T} r(s_t, a_t)$$
+
+    <p>However, there is an immediate problem: this sum is <strong>not a deterministic quantity</strong>. Even with a fixed policy $\pi_\theta$, different roll-outs will produce different trajectories and different total rewards. What are the sources of this variability?</p>
+
+    <ol>
+      <li><strong>The world is stochastic:</strong> The transition dynamics $p(s_{t+1} \mid s_t, a_t)$ may be random. In autonomous driving, for example, other drivers behave unpredictably.</li>
+      <li><strong>The policy may be stochastic:</strong> The agent may not make the same decision every time it encounters the same state, especially if using a stochastic policy for exploration.</li>
+    </ol>
+
+    <h3 id="expected-return">The Expected Return Objective</h3>
+
+    <p>To handle this randomness, we optimize the <strong>expected</strong> sum of rewards:</p>
+
+    $$\max_\theta \; \E_{\tau \sim p_\theta(\tau)} \left[ \sum_{t=1}^{T} r(s_t, a_t) \right]$$
+
+    <p>Here $p_\theta(\tau)$ is the distribution over trajectories induced by the policy $\pi_\theta$ interacting with the environment. Using the Markov property and the chain rule of probability, we can write this trajectory distribution explicitly:</p>
+
+    <div class="callout theorem">
+      <div class="callout-label">Theorem</div>
+      <strong>Trajectory Distribution.</strong> The probability of a trajectory $\tau = (s_1, a_1, s_2, a_2, \ldots, s_T, a_T)$ under policy $\pi_\theta$ is:
+      $$p_\theta(\tau) = p(s_1, a_1, \ldots, s_T, a_T) = p(s_1) \prod_{t=1}^{T} \pi_\theta(a_t \mid s_t) \, p(s_{t+1} \mid s_t, a_t)$$
+      where $p(s_1)$ is the initial state distribution, $\pi_\theta(a_t \mid s_t)$ is the policy, and $p(s_{t+1} \mid s_t, a_t)$ is the (unknown) transition dynamics.
+    </div>
+
+    <p>This factorization is a direct consequence of the Markov property. Notice that the trajectory distribution $p_\theta(\tau)$ depends on $\theta$ only through the policy terms $\pi_\theta(a_t \mid s_t)$&mdash;the dynamics $p(s_{t+1} \mid s_t, a_t)$ are properties of the environment, not of the agent. This separation is crucial: it means we can optimize the policy without knowing the dynamics explicitly (though knowing or learning them can help).</p>
+
+    <details class="proof">
+      <summary>Derivation of the trajectory distribution</summary>
+      <div class="proof-content">
+        <p>Starting from the joint distribution and applying the chain rule:</p>
+        $$p(s_1, a_1, s_2, a_2, \ldots, s_T, a_T) = p(s_1) \cdot p(a_1 \mid s_1) \cdot p(s_2 \mid s_1, a_1) \cdot p(a_2 \mid s_1, a_1, s_2) \cdot p(s_3 \mid s_1, a_1, s_2, a_2) \cdots$$
+        <p>Now we apply two simplifications. First, the Markov property gives us $p(s_{t+1} \mid s_1, a_1, \ldots, s_t, a_t) = p(s_{t+1} \mid s_t, a_t)$. Second, the policy depends only on the current state: $p(a_t \mid s_1, a_1, \ldots, s_t) = \pi_\theta(a_t \mid s_t)$. Substituting these in:</p>
+        $$= p(s_1) \cdot \pi_\theta(a_1 \mid s_1) \cdot p(s_2 \mid s_1, a_1) \cdot \pi_\theta(a_2 \mid s_2) \cdot p(s_3 \mid s_2, a_2) \cdots = p(s_1) \prod_{t=1}^{T} \pi_\theta(a_t \mid s_t) \, p(s_{t+1} \mid s_t, a_t)$$
+      </div>
+    </details>
+
+    <!-- Section 7: Value Functions and Q-Functions -->
+    <h2 id="value-functions">Value Functions and Q-Functions</h2>
+
+    <p>The RL objective asks us to find the policy that maximizes expected cumulative reward. A natural question is: <em>how good is a particular policy?</em> Value functions provide the answer by quantifying the expected future reward from a given state (or state-action pair) under a specific policy.</p>
+
+    <div class="callout definition">
+      <div class="callout-label">Definition</div>
+      <strong>Value Function.</strong> The value function $\Vpi(s)$ gives the expected future reward starting at state $s$ and following policy $\pi$ thereafter:
+      $$\Vpi(s) = \E_\pi \left[ \sum_{t'=t}^{T} r(s_{t'}, a_{t'}) \;\middle|\; s_t = s \right]$$
+    </div>
+
+    <div class="callout definition">
+      <div class="callout-label">Definition</div>
+      <strong>Q-Function (Action-Value Function).</strong> The Q-function $\Qpi(s, a)$ gives the expected future reward starting at state $s$, taking action $a$, and then following policy $\pi$ thereafter:
+      $$\Qpi(s, a) = \E_\pi \left[ \sum_{t'=t}^{T} r(s_{t'}, a_{t'}) \;\middle|\; s_t = s, \, a_t = a \right]$$
+    </div>
+
+    <p>The value function tells us how good it is to <em>be</em> in a state, while the Q-function tells us how good it is to <em>take a particular action</em> in a state. These two quantities are intimately related:</p>
+
+    $$\Vpi(s) = \E_{a \sim \pi(\cdot \mid s)} \left[ \Qpi(s, a) \right]$$
+
+    <p>That is, the value of a state under policy $\pi$ is the expected Q-value over the actions that $\pi$ would select. Value functions and Q-functions are central to many RL algorithms. They serve as building blocks for evaluating policies, comparing alternatives, and driving policy improvement.</p>
+
+    <!-- Section 8: The MDP Framework -->
+    <h2 id="mdp-framework">The Markov Decision Process Framework</h2>
+
+    <p>Putting all the pieces together, we arrive at the formal mathematical framework that underlies nearly all of reinforcement learning: the <strong>Markov Decision Process</strong> (MDP).</p>
+
+    <div class="callout definition">
+      <div class="callout-label">Definition</div>
+      <strong>Markov Decision Process (MDP).</strong> An MDP is defined by:
+      <ul>
+        <li><strong>State $s_t$</strong> &mdash; the state of the world at time $t$</li>
+        <li><strong>Action $a_t$</strong> &mdash; the decision taken at time $t$</li>
+        <li><strong>Reward function $r(s, a)$</strong> &mdash; the immediate reward for being in state $s$ and taking action $a$</li>
+        <li><strong>Initial state distribution $p(s_1)$</strong> &mdash; the distribution over starting states</li>
+        <li><strong>Transition dynamics $p(s_{t+1} \mid s_t, a_t)$</strong> &mdash; the (typically unknown) probability of transitioning to state $s_{t+1}$ given current state $s_t$ and action $a_t$</li>
+      </ul>
+      When the agent only has access to observations $o_t$ rather than full states $s_t$, the framework becomes a <strong>Partially Observed Markov Decision Process (POMDP)</strong>.
+    </div>
+
+    <p>The MDP and POMDP are the canonical formalisms for sequential decision-making under uncertainty. The Markov property&mdash;that $s_{t+1}$ depends only on $(s_t, a_t)$ and not on the earlier history&mdash;is what gives these frameworks their tractable recursive structure.</p>
+
+    <p>The goal within this framework is to learn a policy $\pi_\theta$ that maximizes the expected sum of rewards:</p>
+
+    $$\max_\theta \; \E_{\tau \sim p_\theta(\tau)} \left[ \sum_{t=1}^{T} r(s_t, a_t) \right]$$
+
+    <p>All the methods we will study in this course are different approaches to solving this optimization problem, each making different trade-offs and assumptions.</p>
+
+    <!-- Section 9: Types of Algorithms -->
+    <h2 id="algorithm-types">Types of Deep RL Algorithms</h2>
+
+    <p>Given the RL objective $\max_\theta \, \E_{\tau \sim p_\theta(\tau)} \left[ \sum_t r(s_t, a_t) \right]$, there are several fundamentally different approaches to finding a good policy. Each has its own strengths, weaknesses, and domains of applicability.</p>
+
+    <h3 id="imitation-learning">1. Imitation Learning</h3>
+    <p>Rather than optimizing the reward objective directly, <strong>imitation learning</strong> approaches the problem by mimicking a policy that is known to achieve high reward. Given demonstrations from an expert, the agent learns to reproduce the expert's behavior. This sidesteps the need for reward engineering and exploration, but requires access to high-quality demonstrations. We will study this approach in depth in the next lecture.</p>
+
+    <h3 id="policy-gradients">2. Policy Gradients</h3>
+    <p><strong>Policy gradient</strong> methods directly differentiate the expected return objective with respect to the policy parameters $\theta$. By estimating the gradient $\nabla_\theta \, \E_{\tau \sim p_\theta(\tau)} [\sum_t r(s_t, a_t)]$ from sampled trajectories, these methods can optimize any differentiable policy architecture. They are conceptually clean and widely applicable, but can suffer from high variance in gradient estimates.</p>
+
+    <h3 id="actor-critic">3. Actor-Critic</h3>
+    <p><strong>Actor-critic</strong> methods combine policy optimization with value function estimation. The "critic" estimates the value of the current policy (typically $\Vpi$ or $\Qpi$), and the "actor" uses this estimate to update the policy in a direction that improves performance. This reduces the variance of policy gradient estimates by replacing high-variance reward samples with lower-variance value function estimates.</p>
+
+    <h3 id="value-based">4. Value-Based Methods</h3>
+    <p><strong>Value-based</strong> methods do not maintain an explicit policy at all. Instead, they estimate the value of the <em>optimal</em> policy (typically $\Qstar(s, a)$) and derive actions by selecting the action with the highest estimated value. Q-learning and its deep variant DQN are the canonical examples. These methods work well with discrete action spaces but are harder to apply in continuous settings.</p>
+
+    <h3 id="model-based">5. Model-Based Methods</h3>
+    <p><strong>Model-based</strong> methods learn a model of the environment dynamics $p(s_{t+1} \mid s_t, a_t)$ and then use this model for planning or for improving the policy. By "imagining" trajectories in the learned model, the agent can evaluate potential actions without expensive real-world interaction. These methods can be very data-efficient, but their performance depends on the accuracy of the learned model.</p>
+
+    <h3 id="algorithm-tradeoffs">Why So Many Algorithms?</h3>
+
+    <p>Different algorithms thrive under different assumptions and constraints. The choice depends on several practical considerations:</p>
+
+    <ul>
+      <li><strong>Data collection cost:</strong> How easy or cheap is it to collect data with the current policy? If you have a fast simulator, online methods are attractive. If data collection is expensive (e.g., real robots), offline or model-based methods may be preferred.</li>
+      <li><strong>Supervision availability:</strong> Are expert demonstrations available? Is a detailed reward function easy to specify?</li>
+      <li><strong>Stability and ease of use:</strong> Some algorithms are more stable and easier to tune than others.</li>
+      <li><strong>Action space structure:</strong> Is the action space discrete (e.g., choosing from a menu of options) or continuous (e.g., specifying joint torques)? High-dimensional or low-dimensional?</li>
+      <li><strong>Dynamics complexity:</strong> Is the environment dynamics easy to model, making model-based approaches viable?</li>
+    </ul>
+
+    <div class="callout insight">
+      <div class="callout-label">Key Insight</div>
+      There is no single "best" RL algorithm. The right choice depends on the problem structure, available resources, and practical constraints. A major goal of this course is to build the understanding needed to make informed algorithmic choices for new problems.
+    </div>
+
+    <!-- Section 10: Looking Ahead -->
+    <h2 id="looking-ahead">Summary and Looking Ahead</h2>
+
+    <p>This lecture established the foundational vocabulary and framework for deep reinforcement learning. Let us recap the key definitions.</p>
+
+    <p>We represent sequential decision-making problems using <strong>states</strong> $s_t$ (or <strong>observations</strong> $o_t$), <strong>actions</strong> $a_t$, <strong>reward functions</strong> $r(s, a)$, and <strong>trajectories</strong> $\tau = (s_1, a_1, \ldots, s_T, a_T)$. The <strong>Markov property</strong> states that the next state depends only on the current state and action, giving rise to the <strong>Markov Decision Process (MDP)</strong> framework with its initial state distribution $p(s_1)$ and unknown dynamics $p(s_{t+1} \mid s_t, a_t)$.</p>
+
+    <p>A <strong>policy</strong> $\pi_\theta$ represents the agent's behavior, mapping states to a distribution over actions. The goal of RL is to learn a policy that maximizes the expected sum of rewards:</p>
+
+    $$\max_\theta \; \E_{\tau \sim p_\theta(\tau)} \left[ \sum_{t=1}^{T} r(s_t, a_t) \right]$$
+
+    <p>The <strong>value function</strong> $\Vpi(s)$ measures the expected future reward from a state under policy $\pi$, while the <strong>Q-function</strong> $\Qpi(s, a)$ measures the expected future reward from a state-action pair. These quantities are central to many algorithmic approaches.</p>
+
+    <p>We surveyed five major families of algorithms&mdash;imitation learning, policy gradients, actor-critic, value-based, and model-based methods&mdash;each making different trade-offs appropriate for different problem settings.</p>
+
+    <p>In the next lecture, we begin our study of specific algorithms with <strong>imitation learning</strong>: how to learn a policy from expert demonstrations, the challenges that arise from distribution shift, and techniques like DAgger that address them.</p>
+
   </article>
 
   <nav class="lecture-nav">

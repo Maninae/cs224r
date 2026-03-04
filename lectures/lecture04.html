@@ -46,14 +46,302 @@
       <span class="lecture-tag">GAE</span>
       <span class="lecture-tag">On-Policy</span>
     </div>
-    <a class="lecture-pdf-link" href="../slides/cs224r_2025_lecture4.pdf" target="_blank">
+    <a class="lecture-pdf-link" href="../slides/04_cs224r_actor_critic_2025.pdf" target="_blank">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
       Original PDF slides
     </a>
   </div>
 
   <article class="lecture-article">
-    <!-- Content will be added in Phase 3 -->
+
+    <h2 id="recap-policy-gradients">Recap: Policy Gradients</h2>
+    <p>
+      In the previous lecture we derived the <strong>REINFORCE</strong> estimator for the policy gradient. The core identity is
+    </p>
+    $$\nabla_\theta J(\theta) = \E_{\tau \sim \pi_\theta}\!\left[\sum_{t=0}^{T-1} \nabla_\theta \log \pi_\theta(a_t \mid s_t) \left(\sum_{t'=t}^{T-1} \gamma^{t'-t} r(s_{t'}, a_{t'})\right)\right].$$
+    <p>
+      The quantity $\hat{Q}_t = \sum_{t'=t}^{T-1} \gamma^{t'-t} r(s_{t'}, a_{t'})$ is a single-sample Monte Carlo estimate of the action-value $\Qpi(s_t, a_t)$. While unbiased, this estimator can have extremely high variance because every reward along the trajectory contributes noise. Two classical strategies for variance reduction are:
+    </p>
+    <ul>
+      <li><strong>Causality ("rewards-to-go"):</strong> Drop rewards from time steps before $t$, since $\nabla_\theta \log \pi_\theta(a_t \mid s_t)$ cannot influence past rewards.</li>
+      <li><strong>Baselines:</strong> Subtract a state-dependent baseline $b(s_t)$ from the return without introducing bias, because $\E_{a_t}\!\left[\nabla_\theta \log \pi_\theta(a_t \mid s_t)\, b(s_t)\right] = 0$.</li>
+    </ul>
+    <p>
+      This lecture develops both ideas to their logical conclusion: the <em>actor-critic</em> architecture, which learns an explicit <strong>critic</strong> (value function) and uses it to construct low-variance estimates of the policy gradient for the <strong>actor</strong> (policy).
+    </p>
+
+    <h2 id="value-functions-and-advantage">Value Functions and the Advantage</h2>
+    <p>
+      Before diving into actor-critic methods, let us revisit the three fundamental objects of policy evaluation.
+    </p>
+
+    <div class="callout definition">
+      <div class="callout-label">Definition: State-Value Function</div>
+      <p>The <strong>state-value function</strong> under policy $\pi$ is the expected discounted return starting from state $s$:</p>
+      $$\Vpi(s) = \E_{\pi}\!\left[\sum_{t=0}^{\infty} \gamma^t r(s_t, a_t) \;\middle|\; s_0 = s\right].$$
+    </div>
+
+    <div class="callout definition">
+      <div class="callout-label">Definition: Action-Value Function</div>
+      <p>The <strong>action-value function</strong> additionally conditions on taking action $a$ in the first step:</p>
+      $$\Qpi(s, a) = \E_{\pi}\!\left[\sum_{t=0}^{\infty} \gamma^t r(s_t, a_t) \;\middle|\; s_0 = s,\, a_0 = a\right].$$
+    </div>
+
+    <div class="callout definition">
+      <div class="callout-label">Definition: Advantage Function</div>
+      <p>The <strong>advantage function</strong> measures how much better action $a$ is compared to the average action under $\pi$:</p>
+      $$A^\pi(s, a) = \Qpi(s, a) - \Vpi(s).$$
+      <p>By construction, $\E_{a \sim \pi(\cdot|s)}[A^\pi(s,a)] = 0$ for all $s$.</p>
+    </div>
+
+    <p>
+      The advantage function is the ideal quantity to use in the policy gradient because it has <em>zero mean</em> under the current policy. Intuitively, $A^\pi(s,a) > 0$ means action $a$ is better than average in state $s$, and the gradient update should increase its probability; $A^\pi(s,a) < 0$ means it is worse, and its probability should decrease.
+    </p>
+
+    <h2 id="value-function-baseline">The Value Function as a Baseline</h2>
+    <p>
+      Recall that for any baseline $b(s_t)$, the policy gradient can be written as
+    </p>
+    $$\nabla_\theta J(\theta) = \E_{\pi_\theta}\!\left[\sum_{t=0}^{T-1} \nabla_\theta \log \pi_\theta(a_t \mid s_t)\bigl(\hat{Q}_t - b(s_t)\bigr)\right].$$
+    <p>
+      While any $b(s_t)$ leaves the gradient unbiased, the <strong>variance</strong> of the estimator depends on the choice of baseline. A natural and near-optimal choice is $b(s_t) = \Vpi(s_t)$, because then the gradient becomes
+    </p>
+    $$\nabla_\theta J(\theta) \approx \frac{1}{N}\sum_{i=1}^{N}\sum_{t=0}^{T-1} \nabla_\theta \log \pi_\theta(a_t^i \mid s_t^i)\, A^\pi(s_t^i, a_t^i).$$
+
+    <div class="callout insight">
+      <div class="callout-label">Key Insight</div>
+      <p>Using $\Vpi(s)$ as the baseline converts the policy gradient into an <em>advantage-weighted</em> gradient. The advantage has zero mean by construction, which dramatically reduces variance compared to using raw returns. The better the value function estimate, the lower the variance of the gradient.</p>
+    </div>
+
+    <p>
+      Of course, we do not know $\Vpi$ exactly&mdash;we must <em>learn</em> it. This is the role of the <strong>critic</strong> in actor-critic methods.
+    </p>
+
+    <h2 id="estimating-advantage">Estimating the Advantage</h2>
+    <p>
+      Given a learned value function approximation $V_\phi(s) \approx \Vpi(s)$, there are several ways to estimate the advantage $A^\pi(s_t, a_t)$. Each trades off <strong>bias</strong> and <strong>variance</strong> differently.
+    </p>
+
+    <h3 id="monte-carlo-advantage">Monte Carlo Estimate</h3>
+    <p>
+      The simplest approach uses the single-sample return as an estimate of $\Qpi$:
+    </p>
+    $$\hat{A}_t^{\text{MC}} = \left(\sum_{t'=t}^{T-1} \gamma^{t'-t} r(s_{t'}, a_{t'})\right) - V_\phi(s_t).$$
+    <p>
+      This is <strong>unbiased</strong> (the return is an unbiased estimate of $\Qpi$) but has <strong>high variance</strong> because it sums many stochastic reward terms.
+    </p>
+
+    <h3 id="td-advantage">One-Step TD (Temporal Difference) Estimate</h3>
+    <p>
+      At the other extreme, we can use a single Bellman step:
+    </p>
+    $$\hat{A}_t^{\text{TD}} = r(s_t, a_t) + \gamma V_\phi(s_{t+1}) - V_\phi(s_t).$$
+    <p>
+      This is the <strong>TD residual</strong>, often written $\delta_t$. It has <strong>low variance</strong> (only one reward term), but introduces <strong>bias</strong> if $V_\phi$ is not a perfect approximation of $\Vpi$.
+    </p>
+
+    <h3 id="n-step-advantage">$n$-Step Estimate</h3>
+    <p>
+      A natural interpolation uses $n$ actual rewards before bootstrapping:
+    </p>
+    $$\hat{A}_t^{(n)} = \left(\sum_{l=0}^{n-1} \gamma^l r(s_{t+l}, a_{t+l})\right) + \gamma^n V_\phi(s_{t+n}) - V_\phi(s_t).$$
+    <p>
+      Larger $n$ reduces bias (more real rewards, less reliance on a potentially inaccurate $V_\phi$) but increases variance (more stochastic terms).
+    </p>
+
+    <div class="callout example">
+      <div class="callout-label">Example: Bias-Variance Spectrum</div>
+      <p>Consider a 100-step episode. With $n=1$ (TD), the advantage estimate depends on a single reward and two value-function evaluations&mdash;low variance but potentially biased. With $n=100$ (Monte Carlo), the estimate sums all 100 rewards&mdash;unbiased but noisy. With $n=5$, we get a compromise: five real rewards plus a bootstrap, moderately low variance with moderate bias. In practice, $n$ between 5 and 20 often works well, but the optimal choice is task-dependent.</p>
+    </div>
+
+    <h2 id="gae">Generalized Advantage Estimation (GAE)</h2>
+    <p>
+      Rather than committing to a single $n$, <strong>Generalized Advantage Estimation</strong> (Schulman et al., 2016) takes an exponentially weighted average over <em>all</em> $n$-step estimates, producing a smooth interpolation controlled by a single parameter $\lambda \in [0, 1]$.
+    </p>
+
+    <p>Define the TD residual at time $t$ as</p>
+    $$\delta_t = r(s_t, a_t) + \gamma V_\phi(s_{t+1}) - V_\phi(s_t).$$
+
+    <p>Then GAE is defined as</p>
+    $$\hat{A}_t^{\text{GAE}(\gamma,\lambda)} = \sum_{l=0}^{\infty} (\gamma \lambda)^l \delta_{t+l}.$$
+
+    <details>
+      <summary>Derivation: GAE as a weighted average of $n$-step returns</summary>
+      <p>The $n$-step advantage can be written in terms of TD residuals:</p>
+      $$\hat{A}_t^{(n)} = \sum_{l=0}^{n-1} \gamma^l \delta_{t+l}.$$
+      <p>To see this, expand the definition:</p>
+      $$\hat{A}_t^{(n)} = -V_\phi(s_t) + r_t + \gamma r_{t+1} + \cdots + \gamma^{n-1} r_{t+n-1} + \gamma^n V_\phi(s_{t+n}).$$
+      <p>Now take the GAE definition as the weighted sum:</p>
+      $$\hat{A}_t^{\text{GAE}} = (1-\lambda)\bigl(\hat{A}_t^{(1)} + \lambda\, \hat{A}_t^{(2)} + \lambda^2\, \hat{A}_t^{(3)} + \cdots\bigr).$$
+      <p>Substituting the TD-residual form and collecting terms, each $\delta_{t+l}$ appears in all $n$-step estimates with $n > l$. The coefficient of $\delta_{t+l}$ is</p>
+      $$(1-\lambda)\sum_{n=l+1}^{\infty} \lambda^{n-1} \gamma^l = (1-\lambda) \cdot \gamma^l \cdot \frac{\lambda^l}{1-\lambda} = (\gamma\lambda)^l.$$
+      <p>Therefore $\hat{A}_t^{\text{GAE}(\gamma,\lambda)} = \sum_{l=0}^{\infty}(\gamma\lambda)^l \delta_{t+l}$, as claimed.</p>
+    </details>
+
+    <div class="callout insight">
+      <div class="callout-label">Key Insight: GAE Interpolation</div>
+      <p>GAE smoothly interpolates between two extremes:</p>
+      <ul>
+        <li><strong>$\lambda = 0$:</strong> $\hat{A}_t = \delta_t$ (one-step TD). Low variance, high bias.</li>
+        <li><strong>$\lambda = 1$:</strong> $\hat{A}_t = \sum_{l=0}^{\infty} \gamma^l \delta_{t+l} = \hat{A}_t^{\text{MC}}$ (Monte Carlo). High variance, zero bias (given that $V_\phi$ is used only as a baseline).</li>
+      </ul>
+      <p>In practice, $\lambda \in [0.9, 0.99]$ is common, striking a good balance between bias and variance.</p>
+    </div>
+
+    <h2 id="fitting-value-function">Fitting the Value Function (The Critic)</h2>
+    <p>
+      The critic approximates $\Vpi(s)$ with a parameterised function $V_\phi(s)$, typically a neural network. Training the critic is a <strong>supervised regression</strong> problem: we minimise
+    </p>
+    $$\mathcal{L}(\phi) = \frac{1}{2}\sum_{t} \bigl\|V_\phi(s_t) - \hat{V}_t\bigr\|^2,$$
+    <p>
+      where $\hat{V}_t$ is a target value. Two common choices for the target:
+    </p>
+
+    <h3 id="mc-target">Monte Carlo Target</h3>
+    <p>Use the actual discounted return from the trajectory:</p>
+    $$\hat{V}_t^{\text{MC}} = \sum_{t'=t}^{T-1} \gamma^{t'-t} r(s_{t'}, a_{t'}).$$
+    <p>
+      This is an unbiased target but can be noisy. It requires waiting until the end of the episode to compute.
+    </p>
+
+    <h3 id="bootstrap-target">Bootstrapped (TD) Target</h3>
+    <p>Use the one-step Bellman target:</p>
+    $$\hat{V}_t^{\text{TD}} = r(s_t, a_t) + \gamma V_\phi(s_{t+1}).$$
+    <p>
+      This is biased (it depends on the current, imperfect $V_\phi$) but has lower variance and can be computed online without waiting for the episode to end. In practice, the bootstrapped target is overwhelmingly the more popular choice.
+    </p>
+
+    <div class="callout insight">
+      <div class="callout-label">Key Insight: The Deadly Triad (Preview)</div>
+      <p>Combining <strong>function approximation</strong>, <strong>bootstrapping</strong>, and <strong>off-policy learning</strong> can lead to divergence&mdash;a phenomenon known as the "deadly triad" in RL. On-policy actor-critic uses the first two but avoids the third, making it relatively stable. When we move to off-policy methods in Lecture 5, managing this instability becomes a central challenge.</p>
+    </div>
+
+    <h2 id="batch-actor-critic">The Batch Actor-Critic Algorithm</h2>
+    <p>
+      Putting the actor and critic together, we obtain the <strong>batch actor-critic</strong> algorithm. In each iteration, we collect a batch of trajectories, use them to update both the critic and the actor, then discard the data and repeat. This is an <strong>on-policy</strong> algorithm: the data must come from the current policy $\pi_\theta$.
+    </p>
+
+    <div class="algorithm">
+      <div class="algorithm-title">Batch Actor-Critic</div>
+      <ol>
+        <li>Initialise actor parameters $\theta$ and critic parameters $\phi$.</li>
+        <li><strong>Repeat:</strong>
+          <ol>
+            <li>Collect a batch of trajectories $\{(s_t, a_t, r_t, s_{t+1})\}$ by running $\pi_\theta$ in the environment.</li>
+            <li>Compute advantage estimates $\hat{A}_t$ using the critic $V_\phi$ (e.g., via GAE).</li>
+            <li><strong>Update critic:</strong> Minimise $\mathcal{L}(\phi) = \frac{1}{2}\sum_t \|V_\phi(s_t) - \hat{V}_t\|^2$ by gradient descent on $\phi$.</li>
+            <li><strong>Update actor:</strong> Take a gradient step on $\theta$ using
+              $$\nabla_\theta J(\theta) \approx \frac{1}{|\mathcal{B}|}\sum_{t \in \mathcal{B}} \nabla_\theta \log \pi_\theta(a_t \mid s_t)\, \hat{A}_t.$$
+            </li>
+          </ol>
+        </li>
+      </ol>
+    </div>
+
+    <p>
+      A key practical detail is that the critic update and the advantage computation are interleaved. Some implementations fit the critic <em>before</em> computing advantages (so advantages use an up-to-date $V_\phi$); others compute advantages first and then update the critic. Both work in practice, though the former is slightly more common.
+    </p>
+
+    <h2 id="a2c-a3c">A2C and A3C</h2>
+    <p>
+      The <strong>Advantage Actor-Critic (A2C)</strong> and its asynchronous variant <strong>A3C</strong> (Mnih et al., 2016) are two of the most well-known instantiations of the actor-critic framework.
+    </p>
+
+    <h3 id="a3c">Asynchronous Advantage Actor-Critic (A3C)</h3>
+    <p>
+      A3C runs <strong>multiple parallel workers</strong>, each with its own copy of the environment. Each worker independently collects a short trajectory segment (e.g., $n = 5$ or $20$ steps), computes the policy gradient and critic loss, and asynchronously updates a shared set of global parameters. The key idea is that <strong>asynchronous updates from diverse workers provide natural exploration</strong> and decorrelate the gradient updates, functioning as an alternative to experience replay.
+    </p>
+
+    <div class="algorithm">
+      <div class="algorithm-title">A3C (Per Worker)</div>
+      <ol>
+        <li>Sync local parameters $\theta', \phi'$ with global parameters $\theta, \phi$.</li>
+        <li>Collect $n$-step trajectory segment using $\pi_{\theta'}$.</li>
+        <li>Compute $n$-step returns and advantage estimates $\hat{A}_t$.</li>
+        <li>Compute gradients $\nabla_{\theta'} J$ and $\nabla_{\phi'} \mathcal{L}$.</li>
+        <li>Asynchronously update global $\theta, \phi$ using the computed gradients.</li>
+        <li>Go to step 1.</li>
+      </ol>
+    </div>
+
+    <h3 id="a2c">Synchronous Advantage Actor-Critic (A2C)</h3>
+    <p>
+      A2C is the <strong>synchronous</strong> version: all workers collect trajectories in parallel, but gradients are aggregated before a single, synchronised update. Empirically, A2C matches or exceeds A3C in performance while being simpler to implement and debug. It also makes more efficient use of GPU batching.
+    </p>
+
+    <div class="callout insight">
+      <div class="callout-label">Key Insight: Why Synchronous Often Wins</div>
+      <p>A3C's asynchronous updates can cause workers to compute gradients based on stale parameters, which introduces noise and can slow convergence. A2C avoids this by synchronising updates. With modern vectorised environments (e.g., batched simulation on a single GPU), A2C can collect data just as fast as A3C without the staleness problem. This is why A2C has largely supplanted A3C in practice.</p>
+    </div>
+
+    <h2 id="online-actor-critic">Online Actor-Critic</h2>
+    <p>
+      The batch algorithm collects full trajectories or large batches before updating. An alternative is the <strong>online</strong> (single-step) actor-critic, which updates after every environment step:
+    </p>
+
+    <div class="algorithm">
+      <div class="algorithm-title">Online Actor-Critic (Single Step)</div>
+      <ol>
+        <li>Observe state $s$, take action $a \sim \pi_\theta(\cdot \mid s)$, observe $r, s'$.</li>
+        <li>Compute TD residual: $\delta = r + \gamma V_\phi(s') - V_\phi(s)$.</li>
+        <li>Update critic: $\phi \leftarrow \phi - \alpha_\phi\, \delta\, \nabla_\phi V_\phi(s)$.</li>
+        <li>Update actor: $\theta \leftarrow \theta + \alpha_\theta\, \delta\, \nabla_\theta \log \pi_\theta(a \mid s)$.</li>
+        <li>Set $s \leftarrow s'$ and repeat.</li>
+      </ol>
+    </div>
+
+    <p>
+      The online actor-critic is appealingly simple: the TD error $\delta$ serves simultaneously as the advantage estimate $\hat{A}(s,a) \approx \delta$ and the signal for updating the critic. However, single-step updates tend to be very noisy and can be unstable with neural-network function approximators. In practice, the batch approach with GAE is more robust and is the standard choice for deep RL.
+    </p>
+
+    <h2 id="discount-factors">Discount Factors in Practice</h2>
+    <p>
+      The discount factor $\gamma$ plays a dual role in actor-critic methods. <strong>First</strong>, it defines the objective: we optimise the $\gamma$-discounted return. <strong>Second</strong>, it controls the effective horizon of the value function and advantage estimates.
+    </p>
+    <p>
+      In many practical implementations, the discount factor is applied <em>only</em> to the critic's bootstrapping and not explicitly used as a weighting in the policy gradient sum. The rationale is that for episodic tasks, we typically want to optimise the undiscounted return $\sum_t r_t$ but use $\gamma < 1$ as a <strong>variance reduction</strong> technique that limits how far into the future the critic must predict.
+    </p>
+
+    <div class="callout example">
+      <div class="callout-label">Example: Choosing $\gamma$ and $\lambda$</div>
+      <p>In locomotion tasks (e.g., MuJoCo Humanoid), a typical configuration is $\gamma = 0.99$ and $\lambda = 0.95$. The relatively high $\gamma$ ensures the agent plans over long horizons (crucial for walking), while $\lambda < 1$ keeps the advantage estimates stable. In short-horizon tasks (e.g., CartPole), smaller values like $\gamma = 0.95$ can work because the relevant planning horizon is shorter.</p>
+    </div>
+
+    <h2 id="architecture-choices">Architecture Choices</h2>
+    <p>
+      A key design decision in actor-critic methods is whether the actor and critic <strong>share parameters</strong> or use <strong>separate networks</strong>.
+    </p>
+
+    <h3 id="shared-network">Shared Network</h3>
+    <p>
+      A common architecture uses a shared feature extractor (e.g., a convolutional network for image inputs) with two separate heads: one outputting the policy $\pi_\theta(a \mid s)$ and one outputting $V_\phi(s)$. This is parameter-efficient and can accelerate learning when useful representations are common to both tasks. However, the actor and critic losses can sometimes conflict, requiring careful loss weighting.
+    </p>
+
+    <h3 id="separate-networks">Separate Networks</h3>
+    <p>
+      Using entirely separate networks for the actor and critic avoids gradient interference. This is often preferred when the observation space is low-dimensional (e.g., joint angles) and the computational cost of separate networks is negligible. Most modern implementations (e.g., PPO in practice) lean toward separate networks or very lightly shared architectures.
+    </p>
+
+    <div class="callout insight">
+      <div class="callout-label">Key Insight: Actor-Critic as a Foundation</div>
+      <p>Nearly all modern deep RL algorithms are actor-critic methods at heart. PPO, SAC, TD3, and even many offline RL algorithms use a learned critic to guide policy updates. The ideas in this lecture&mdash;advantage estimation, GAE, and the interplay of actor and critic updates&mdash;recur throughout the rest of the course.</p>
+    </div>
+
+    <h2 id="summary">Summary</h2>
+    <p>
+      In this lecture we built the actor-critic framework from first principles. The key ideas are:
+    </p>
+    <ul>
+      <li>The <strong>advantage function</strong> $A^\pi(s,a) = \Qpi(s,a) - \Vpi(s)$ is the ideal quantity for the policy gradient, since it has zero mean and directly indicates which actions are better than average.</li>
+      <li>A learned <strong>critic</strong> $V_\phi(s) \approx \Vpi(s)$ provides a baseline that dramatically reduces variance.</li>
+      <li><strong>GAE</strong> smoothly interpolates between low-variance/high-bias (TD) and high-variance/low-bias (MC) advantage estimates via the parameter $\lambda$.</li>
+      <li>The <strong>batch actor-critic</strong> algorithm alternates between collecting on-policy data, fitting the critic, and updating the actor with advantage-weighted policy gradients.</li>
+      <li><strong>A2C/A3C</strong> scale the algorithm across parallel workers, with synchronous updates (A2C) generally preferred in modern practice.</li>
+    </ul>
+    <p>
+      The main limitation of on-policy actor-critic is <strong>sample efficiency</strong>: every gradient update requires fresh data from the current policy. In the next lecture, we will explore <em>off-policy</em> actor-critic methods that reuse past experience, dramatically improving data efficiency.
+    </p>
+
   </article>
 
   <nav class="lecture-nav">

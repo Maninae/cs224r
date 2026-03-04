@@ -46,14 +46,247 @@
       <span class="lecture-tag">Task Distribution</span>
       <span class="lecture-tag">Fast Adaptation</span>
     </div>
-    <a class="lecture-pdf-link" href="../slides/cs224r_2025_lecture13.pdf" target="_blank">
+    <a class="lecture-pdf-link" href="../slides/13_cs224r_metarl_2025.pdf" target="_blank">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
       Original PDF slides
     </a>
   </div>
 
   <article class="lecture-article">
-    <!-- Content will be added in Phase 3 -->
+
+    <!-- Section 1: From Multi-Task to Meta-Learning -->
+    <h2 id="from-multi-task-to-meta">From Multi-Task Learning to Meta-Learning</h2>
+
+    <p>In the previous lecture, we trained a single policy to handle a distribution of tasks by conditioning on a task identifier $z_i$. This works well when the task identifier is available at test time&mdash;for instance, when a human provides a language instruction. But what happens when the agent encounters a <em>new</em> task for which no explicit identifier is given? The agent must figure out what the task is from interaction alone, and it must do so quickly.</p>
+
+    <p>This is the domain of <strong>meta-reinforcement learning (meta-RL)</strong>: training agents that can <em>learn to learn</em>, adapting to new tasks from a small amount of experience. Where multi-task RL asks "can we train one policy for many tasks?", meta-RL asks the deeper question: "can we train an agent that rapidly adapts to <em>any</em> task drawn from a distribution, using only a handful of episodes?"</p>
+
+    <div class="callout insight">
+      <div class="callout-label">Key Insight</div>
+      The key shift from multi-task RL to meta-RL is about <em>what is learned</em>. In multi-task RL, the agent learns a single policy that covers all training tasks. In meta-RL, the agent learns a <em>learning algorithm</em>&mdash;an adaptation procedure that can be applied to produce task-specific behavior from limited data. The output of meta-training is not a fixed policy, but a mechanism for quickly generating good policies.
+    </div>
+
+    <h3 id="transfer-learning-spectrum">The Transfer Learning Spectrum</h3>
+
+    <p>Meta-RL sits on a spectrum of approaches that leverage shared structure across tasks:</p>
+
+    <ul>
+      <li><strong>Forward transfer:</strong> Train on one or more source tasks, then fine-tune on a target task. The source training provides a good initialization, but adaptation still requires substantial data. Example: pretraining a vision backbone on ImageNet, then fine-tuning for a downstream task.</li>
+      <li><strong>Multi-task learning:</strong> Train on all tasks jointly, producing a single model that handles them all. As discussed in Lecture 12, this requires an explicit task identifier at test time.</li>
+      <li><strong>Meta-learning:</strong> Train on a distribution of tasks such that the resulting system can adapt to a new task from very few examples. The adaptation procedure itself is learned during training.</li>
+    </ul>
+
+    <p>Meta-learning is the most ambitious of these: it asks the training process to discover not just good features or policies, but a good <em>learning procedure</em>.</p>
+
+
+    <!-- Section 2: Few-Shot Learning and the Meta-Learning Setup -->
+    <h2 id="meta-learning-setup">The Meta-Learning Problem Setup</h2>
+
+    <p>Meta-learning has been widely studied in supervised learning under the umbrella of <strong>few-shot learning</strong>. The setup there provides useful intuition for the RL case.</p>
+
+    <h3 id="few-shot-supervised">Few-Shot Learning in Supervised Settings</h3>
+
+    <p>In few-shot image classification, the agent must classify images of new categories after seeing only a handful of labeled examples per category. The standard protocol involves:</p>
+
+    <ol>
+      <li><strong>Meta-training:</strong> Present the learner with many "episodes," each consisting of a small support set (a few labeled examples of novel classes) and a query set (test images to classify).</li>
+      <li><strong>Meta-testing:</strong> Evaluate on entirely new classes not seen during meta-training, again with only a few examples per class.</li>
+    </ol>
+
+    <p>The meta-learner is trained end-to-end across episodes so that its adaptation mechanism (whether gradient-based, metric-based, or memory-based) becomes effective at few-shot classification.</p>
+
+    <h3 id="meta-rl-formulation">Meta-RL Problem Formulation</h3>
+
+    <p>We now translate this to reinforcement learning. We have a distribution over tasks $p(\mathcal{M})$, where each task $\mathcal{M}_i$ is an MDP. The meta-RL protocol mirrors the few-shot setup:</p>
+
+    <div class="callout definition">
+      <div class="callout-label">Definition</div>
+      <strong>Episodic Meta-RL.</strong> Given a task distribution $p(\mathcal{M})$, the episodic meta-RL setting proceeds as follows:
+      <ul>
+        <li><strong>Meta-training:</strong> For each training iteration, sample a task $\mathcal{M}_i \sim p(\mathcal{M})$. Allow the agent $K$ <em>exploration episodes</em> in $\mathcal{M}_i$ to gather information. Then evaluate the agent's performance on an <em>execution episode</em> in the same task. The meta-objective is to maximize expected return on the execution episode, averaged over the task distribution.</li>
+        <li><strong>Meta-testing:</strong> Sample a new task $\mathcal{M}_j \sim p(\mathcal{M})$ not seen during meta-training. The agent again gets $K$ exploration episodes, and is evaluated on execution.</li>
+      </ul>
+    </div>
+
+    <p>The critical distinction from multi-task RL is that the agent receives no explicit task identifier $z_i$. Instead, it must infer the task identity from its exploration experience. The exploration episodes serve as the "support set," and the execution episode as the "query set," drawing a direct parallel to few-shot supervised learning.</p>
+
+    <div class="callout example">
+      <div class="callout-label">Example</div>
+      <strong>Maze Navigation.</strong> Consider a distribution of maze environments. Each maze has a different layout and a hidden goal location. During exploration episodes, the agent can navigate the maze, discovering the layout and searching for the goal. During the execution episode, it must reach the goal efficiently using the information gathered during exploration. A meta-RL agent learns a strategy for systematic exploration (e.g., searching unexplored corridors) that transfers across maze layouts.
+    </div>
+
+    <h3 id="task-distribution-examples">Examples of Task Distributions</h3>
+
+    <p>Task distributions arise naturally in many settings:</p>
+
+    <ul>
+      <li><strong>Locomotion:</strong> Walking across different terrain types (ice, sand, slopes) where the dynamics change.</li>
+      <li><strong>Manipulation:</strong> Picking up objects of varying shapes, sizes, and weights.</li>
+      <li><strong>Navigation:</strong> Finding goals in different environments.</li>
+      <li><strong>Dialogue:</strong> Conversing with users who have different preferences or needs.</li>
+      <li><strong>Game playing:</strong> Adapting strategy when facing opponents with different play styles.</li>
+    </ul>
+
+
+    <!-- Section 3: Black-Box Meta-RL -->
+    <h2 id="black-box-meta-rl">Black-Box Meta-RL</h2>
+
+    <p>The most conceptually simple approach to meta-RL is the <strong>black-box</strong> (or <strong>context-based</strong>) method: train a neural network with memory that takes in the entire history of interactions and outputs actions. The adaptation to a new task happens implicitly within the network's forward pass&mdash;the memory accumulates information about the task, and the policy conditions on this accumulated context.</p>
+
+    <div class="callout definition">
+      <div class="callout-label">Definition</div>
+      <strong>Black-Box Meta-RL.</strong> A black-box meta-RL agent uses a neural network $f_\theta$ with memory (e.g., an RNN, transformer, or external memory module) that maps the history of past observations, actions, and rewards to the next action:
+      $$a_t = f_\theta(s_1, a_1, r_1, s_2, a_2, r_2, \ldots, s_t)$$
+      The parameters $\theta$ are trained via standard RL across many tasks during meta-training. At meta-test time, $\theta$ is frozen, and the network adapts to a new task purely through its internal memory dynamics.
+    </div>
+
+    <h3 id="black-box-training">Training Black-Box Meta-RL</h3>
+
+    <p>The training procedure for black-box meta-RL is straightforward:</p>
+
+    <div class="algorithm">
+      <div class="algorithm-title">Black-Box Meta-RL Training</div>
+      <ol>
+        <li>Sample a batch of tasks $\{\mathcal{M}_i\}$ from $p(\mathcal{M})$.</li>
+        <li>For each task $\mathcal{M}_i$:
+          <ul>
+            <li>Reset the agent's memory (hidden state).</li>
+            <li>Collect $K$ exploration episodes in $\mathcal{M}_i$, updating the hidden state but not the parameters.</li>
+            <li>Collect an execution episode and compute its return $R_i$.</li>
+          </ul>
+        </li>
+        <li>Update $\theta$ to maximize $\E_i[R_i]$ using any policy gradient or actor-critic algorithm.</li>
+        <li>Repeat until convergence.</li>
+      </ol>
+      <p>The key property: the memory is reset between tasks (to prevent information leaking across tasks) but persists across episodes within the same task (to allow information accumulation).</p>
+    </div>
+
+    <p>At test time, the procedure is identical except that we freeze $\theta$. The agent encounters a new task, and its internal memory state evolves as it interacts, effectively performing task inference and policy adaptation through the learned dynamics of the recurrent network.</p>
+
+    <h3 id="architectures">Architectures for Black-Box Meta-RL</h3>
+
+    <p>Several neural network architectures have been proposed for black-box meta-RL, each offering different tradeoffs in terms of memory capacity, computational efficiency, and the types of adaptation they can express:</p>
+
+    <ul>
+      <li><strong>RL$^2$ (Duan et al., 2016; Wang et al., 2016):</strong> Uses an RNN (LSTM or GRU) as the meta-learner. The RNN's hidden state accumulates information across time steps and episodes. At each step, it receives the current observation, previous action, and previous reward as input. The RNN's recurrence naturally implements a form of Bayesian updating, though the specific update rule is learned rather than hand-designed.</li>
+      <li><strong>SNAIL (Mishra et al., 2018):</strong> Uses a combination of temporal convolutions and self-attention layers. Temporal convolutions provide efficient aggregation over long sequences, while attention allows the model to selectively focus on the most relevant past experiences. This architecture can scale to longer adaptation horizons than vanilla RNNs.</li>
+      <li><strong>PEARL (Rakelly et al., 2019):</strong> Uses a feedforward encoder that processes individual transitions $(s, a, r, s')$ independently, then averages the resulting embeddings to form a task context vector $z$. The policy conditions on this context: $\pi(a \mid s, z)$. This permutation-invariant aggregation is computationally efficient and works well when the order of exploration transitions is not critical for task identification.</li>
+    </ul>
+
+    <div class="callout insight">
+      <div class="callout-label">Key Insight</div>
+      All three architectures implement the same conceptual idea&mdash;accumulate information from past experience and condition the policy on this accumulated context&mdash;but they differ in <em>how</em> information is aggregated. RNNs aggregate sequentially and can learn order-dependent strategies. Attention mechanisms aggregate selectively. PEARL's averaging aggregates symmetrically. The best choice depends on whether task identification requires remembering specific sequences of events or merely collecting sufficient statistics.
+    </div>
+
+    <h3 id="meta-rl-examples">Examples and Capabilities</h3>
+
+    <p>Black-box meta-RL agents can exhibit remarkably sophisticated behavior. In maze navigation tasks, an RL$^2$ agent learns to systematically explore corridors it has not visited, building an internal map of the maze layout. When placed in a new maze, it navigates to the goal far more efficiently than an agent trained from scratch. In continuous control tasks, PEARL adapts its locomotion strategy within a few episodes when the dynamics change&mdash;for instance, when a leg becomes injured or the terrain properties shift.</p>
+
+    <p>Perhaps most strikingly, black-box meta-RL has connections to the way modern large language models reason. Systems like <strong>DeepSeek R1</strong> use chain-of-thought reasoning that can be viewed as a form of in-context adaptation: the model processes the problem description (analogous to exploration episodes) and then generates a solution (the execution episode), with the "adaptation" happening entirely within the forward pass of the transformer. Both are instances of using the meta-learned network dynamics to implement a learned algorithm in the activations.</p>
+
+
+    <!-- Section 4: Connection to Multi-Task Policies -->
+    <h2 id="connection-multi-task">Connection to Multi-Task Policies</h2>
+
+    <p>There is a deep connection between black-box meta-RL and the multi-task policies from Lecture 12. Recall that a multi-task policy conditions on a task identifier: $\pi(a \mid s, z_i)$. In black-box meta-RL, the accumulated experience $\mathcal{D}_{\text{tr}} = \{(s_t, a_t, r_t, s_{t+1})\}$ from exploration episodes serves as an implicit task identifier.</p>
+
+    <p>Consider the PEARL architecture specifically. It computes a context vector $z = \frac{1}{|\mathcal{D}_{\text{tr}}|} \sum_{(s, a, r, s') \in \mathcal{D}_{\text{tr}}} q_\phi(s, a, r, s')$, where $q_\phi$ is a learned encoder. The policy then acts as $\pi(a \mid s, z)$&mdash;which is exactly a multi-task policy conditioned on a learned task embedding. The difference from Lecture 12 is that $z$ is inferred from experience rather than given as input.</p>
+
+    <div class="callout definition">
+      <div class="callout-label">Definition</div>
+      <strong>Task Inference.</strong> In the meta-RL setting, <strong>task inference</strong> is the process of identifying which task the agent is in based on interaction data. Formally, it corresponds to computing a posterior distribution over tasks (or a point estimate) given the exploration data: $p(\mathcal{M}_i \mid \mathcal{D}_{\text{tr}})$. The quality of this inference directly determines the quality of the execution policy.
+    </div>
+
+
+    <!-- Section 5: Meta-RL as a POMDP -->
+    <h2 id="meta-rl-pomdp">Meta-RL as a POMDP</h2>
+
+    <p>A powerful theoretical perspective views meta-RL through the lens of <strong>partially observable Markov decision processes (POMDPs)</strong>. The task identity $\mathcal{M}_i$ is a hidden variable that the agent cannot directly observe. Instead, the agent receives observations, rewards, and transitions that are <em>generated</em> by the unknown task. The agent must maintain a belief over which task it is in and act optimally given this uncertainty.</p>
+
+    <p>Formally, we can construct a POMDP where:</p>
+
+    <ul>
+      <li>The <strong>hidden state</strong> includes the task identity $\mathcal{M}_i$ (which is fixed within an episode but unknown to the agent).</li>
+      <li>The <strong>observations</strong> are the standard state observations $s_t$ and rewards $r_t$, which provide partial information about the hidden task.</li>
+      <li>The <strong>belief state</strong> $b_t = p(\mathcal{M}_i \mid h_t)$ is the agent's posterior distribution over tasks given the interaction history $h_t$.</li>
+    </ul>
+
+    <p>Under this POMDP view, the optimal meta-RL policy is the Bayes-optimal policy for this POMDP. It maintains a belief over tasks and takes actions that are optimal given the current belief&mdash;including actions that are informative (exploration) rather than immediately rewarding (exploitation).</p>
+
+    <div class="callout theorem">
+      <div class="callout-label">Theorem</div>
+      <strong>Bayes-Optimal Meta-RL (Informal).</strong> The optimal policy for the meta-RL POMDP balances two objectives: (1) taking actions that yield high immediate reward given the current task belief, and (2) taking actions that reduce uncertainty about the task identity, enabling higher reward in the future. A policy that only exploits (ignoring exploration value) or only explores (ignoring exploitation) is generally suboptimal.
+    </div>
+
+    <p>This Bayes-optimal perspective clarifies <em>why</em> exploration and exploitation must be interleaved: each exploration action has both an immediate cost (potentially suboptimal reward) and an information-gathering benefit (reducing task uncertainty for future decisions).</p>
+
+
+    <!-- Section 6: Exploration in Meta-RL -->
+    <h2 id="exploration-meta-rl">The Exploration Challenge in Meta-RL</h2>
+
+    <p>Exploration is the central challenge that distinguishes meta-RL from multi-task RL. In multi-task RL, the task identifier is given explicitly. In meta-RL, the agent must <em>discover</em> the task through exploration, and the quality of exploration directly determines the quality of execution. This creates a difficult optimization landscape.</p>
+
+    <h3 id="chicken-and-egg">The Chicken-and-Egg Problem</h3>
+
+    <p>End-to-end meta-RL training faces a fundamental coupling problem between exploration and execution:</p>
+
+    <ul>
+      <li>If exploration is poor, the agent gathers uninformative data, making good execution impossible.</li>
+      <li>If execution is poor, the gradient signal for improving exploration is weak or absent, since even good exploration data cannot rescue a bad execution policy.</li>
+    </ul>
+
+    <p>This chicken-and-egg problem can trap the meta-learner in poor local optima. Consider a cooking robot that must first find ingredients (exploration) and then cook a dish (execution). If the robot never learns to find the right ingredients, it cannot learn to cook, and if it cannot cook, it has no incentive to search for ingredients more carefully. End-to-end training must simultaneously improve both, which is challenging when the reward signal is sparse.</p>
+
+    <div class="callout insight">
+      <div class="callout-label">Key Insight</div>
+      The coupling between exploration and execution is the primary reason why end-to-end meta-RL methods (like RL$^2$) struggle in environments that require complex exploration. The gradient from the execution reward must propagate back through the exploration episodes to improve the exploration strategy&mdash;a long credit assignment chain that becomes increasingly difficult as the exploration horizon grows.
+    </div>
+
+    <h3 id="alternative-exploration">Alternative Exploration Strategies</h3>
+
+    <p>Several approaches have been proposed to sidestep the chicken-and-egg problem by decoupling exploration from end-to-end training:</p>
+
+    <ul>
+      <li><strong>Posterior sampling (Thompson sampling):</strong> PEARL uses this classical idea. The agent maintains a distribution $q(z \mid \mathcal{D}_{\text{tr}})$ over task embeddings, samples $z$ from the current posterior, and acts optimally for that sampled task. This provides principled exploration without requiring end-to-end optimization of the exploration strategy. However, it can be suboptimal by an arbitrarily large amount in some environments where more targeted information gathering is needed.</li>
+      <li><strong>Intrinsic reward methods:</strong> MAME (Gurumurthy et al., 2019) adds intrinsic rewards (such as curiosity or entropy bonuses) to the exploration episodes to encourage information gathering. This provides a stronger exploration signal but requires hand-designing the intrinsic reward, which may not align with what is actually useful for task identification.</li>
+      <li><strong>Model-based exploration:</strong> MetaCURE (Zhang et al., 2020) trains a dynamics and reward prediction model $f(s', r \mid s, a, \mathcal{D}_{\text{tr}})$ and collects exploration data to make this model accurate. The intuition is that understanding the task dynamics is sufficient for task identification. However, this can be wasteful when the dynamics are complex but only a small aspect varies across tasks.</li>
+    </ul>
+
+
+    <!-- Section 7: Summary and Tradeoffs -->
+    <h2 id="summary-tradeoffs">Summary of Meta-RL Approaches</h2>
+
+    <p>The meta-RL landscape offers several design choices, each with characteristic strengths and weaknesses:</p>
+
+    <div class="callout definition">
+      <div class="callout-label">Definition</div>
+      <strong>Three Paradigms for Meta-RL.</strong>
+      <ul>
+        <li><strong>End-to-end (e.g., RL$^2$, VariBAD):</strong> Optimize exploration and execution jointly. Leads to the optimal strategy in principle, but challenging optimization when exploration is hard due to the coupling problem.</li>
+        <li><strong>Alternative exploration strategies (e.g., PEARL, MAME, MetaCURE):</strong> Replace learned exploration with a hand-designed strategy. Easy to optimize and based on principled strategies, but can be suboptimal by an arbitrarily large amount in some environments.</li>
+        <li><strong>Decoupled exploration and execution (e.g., DREAM):</strong> Separate the exploration and execution learning problems. Leads to the optimal strategy in principle and is easier to optimize in practice, but requires additional structure such as a task identifier during meta-training.</li>
+      </ul>
+    </div>
+
+    <p>The choice between these paradigms depends on the specific problem characteristics. End-to-end methods are most appropriate when the exploration horizon is short and the reward signal is dense. Alternative strategies work well when standard exploration methods (like Thompson sampling) happen to align with the task structure. Decoupled methods shine when the exploration problem is complex but the task-relevant information is low-dimensional.</p>
+
+
+    <!-- Section 8: Looking Ahead -->
+    <h2 id="looking-ahead">Looking Ahead</h2>
+
+    <p>This lecture introduced meta-RL as an extension of multi-task RL where the agent must infer the task identity from interaction rather than receiving it as input. The black-box approach uses neural networks with memory to implement learned adaptation algorithms. The POMDP perspective reveals meta-RL as optimal decision-making under task uncertainty, inherently requiring a balance between exploration and exploitation.</p>
+
+    <p>Key takeaways:</p>
+
+    <ul>
+      <li>Meta-RL trains agents to rapidly adapt to new tasks from limited experience, learning a learning algorithm rather than a fixed policy.</li>
+      <li>Black-box meta-RL uses recurrent or attention-based networks to accumulate task information and condition policy execution on the accumulated context.</li>
+      <li>The POMDP perspective reveals that optimal meta-RL requires Bayes-optimal exploration&mdash;gathering information about the task while simultaneously maximizing reward.</li>
+      <li>The coupling between exploration and execution is the central optimization challenge, motivating decoupled approaches.</li>
+    </ul>
+
+    <p>In the next lecture, we examine the exploration problem in greater depth. We will study principled exploration strategies for bandits and MDPs&mdash;from upper confidence bounds to posterior sampling&mdash;and then return to the meta-learning setting to see how the DREAM algorithm elegantly decouples exploration from execution.</p>
+
   </article>
 
   <nav class="lecture-nav">

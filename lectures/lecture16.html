@@ -46,14 +46,249 @@
       <span class="lecture-tag">Reset-Free</span>
       <span class="lecture-tag">Autonomous</span>
     </div>
-    <a class="lecture-pdf-link" href="../slides/cs224r_2025_lecture16.pdf" target="_blank">
+    <a class="lecture-pdf-link" href="../slides/16_cs224r_autonomy_2025.pdf" target="_blank">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
       Original PDF slides
     </a>
   </div>
 
   <article class="lecture-article">
-    <!-- Content will be added in Phase 3 -->
+
+    <!-- Section 1: The Problem with Standard RL -->
+    <h2 id="why-not-autonomous">Why Aren't Robots Autonomous Already?</h2>
+
+    <p>Reinforcement learning is, at its core, a trial-and-error process. The agent executes actions from a policy $\pi$, observes data from the environment, updates the policy, and repeats. In simulation, this loop is effortless&mdash;the environment can be reset to any initial state with a single function call (<code>env.reset()</code>). But in the real world, <strong>there is no reset button</strong>.</p>
+
+    <p>Consider a robot learning to shelf a book. Through trial and error, the robot may attempt the task thousands of times before finding a reliable strategy. After each attempt&mdash;whether the book lands on the shelf or falls to the floor&mdash;someone must walk over, pick up the book, reposition the robot's arm, and set up the scene again. This <strong>human supervision at every episode boundary</strong> is one of the primary bottlenecks preventing RL from scaling on real robots.</p>
+
+    <p>The same problem arises across domains: a robot learning to navigate must be carried back to a starting position after each trial; a manipulation robot must have its workspace tidied by a person; a legged robot that falls over must be placed upright again. Each of these resets requires human intervention, making the data collection process fundamentally non-autonomous.</p>
+
+    <div class="callout insight">
+      <div class="callout-label">Key Insight</div>
+      Standard RL assumes access to an environment reset at the end of each episode. In simulation, this is trivial. In the real world, resets require human supervision, making RL on physical robots expensive, slow, and difficult to scale. The goal of autonomous RL is to remove this bottleneck.
+    </div>
+
+    <h2 id="autonomous-rl-definition">Defining Autonomous RL</h2>
+
+    <p>What if we simply increased the episode length $H$ so that the robot interacts with the world for a very long time between resets? Fewer resets mean less human supervision. Taken to the extreme, we arrive at the definition of <strong>autonomous RL</strong>:</p>
+
+    <div class="callout definition">
+      <div class="callout-label">Definition</div>
+      <strong>Autonomous Reinforcement Learning.</strong> A setting in which the agent interacts with the environment autonomously over an extended period, with no environment resets (or very infrequent resets). The agent is initialized once at the beginning and must learn to accomplish tasks without human intervention during training.
+    </div>
+
+    <h3 id="evaluation-criteria">Two Evaluation Criteria</h3>
+
+    <p>In autonomous RL, we may care about two different evaluation criteria, depending on the application:</p>
+
+    <ol>
+      <li><strong>Deployed Policy Evaluation:</strong> Measures the quality of the learned policy when evaluated from the initial state distribution $\rho_0$ after training is complete. This is the standard RL objective:
+        $$J(\pi) = \E_{s_1 \sim p(s_1), a_t \sim \pi}\left[\sum_t \gamma^t r(s_t, a_t)\right]$$
+        This is appropriate when the robot is being trained to perform a task that will later be deployed (e.g., a robot chef that trains in the kitchen and then must reliably cook meals).
+      </li>
+      <li><strong>Continuing Policy Evaluation:</strong> Measures the total reward accumulated over the agent's entire lifetime:
+        $$\lim_{h \to \infty} \E\left[\frac{1}{h}\sum_{t=0}^{h} r(s_t, a_t)\right]$$
+        This is appropriate when the agent must perform well <em>during</em> training, not just after (e.g., a Mars rover that must collect useful data from day one, since there is no "deployment" phase separate from its operational life).
+      </li>
+    </ol>
+
+    <h3 id="why-important">Why Autonomous RL Matters</h3>
+
+    <p>The connection between robotics and autonomy runs deep. We want robots not only to <em>operate</em> with minimal human supervision, but also to <em>train</em> with minimal human supervision. RL on real robots is a promising path toward high success rates and reliability&mdash;but only if data collection can scale. Autonomy unlocks more data, and more data may unlock greater generalization. This is the fundamental motivation for the algorithms we study in this lecture.</p>
+
+    <h2 id="challenges">The Challenges of Learning Autonomously</h2>
+
+    <p>What happens when we simply apply standard RL algorithms (like SAC) to the autonomous setting by increasing the episode length? Empirical results reveal a stark degradation: as the episode length increases from 1,000 to 100,000 steps, the quality of the deployed policy drops dramatically. With episodes of 100,000 steps, the agent barely learns at all.</p>
+
+    <p>Two fundamental challenges explain this failure:</p>
+
+    <h3 id="challenge-exploration-drift">Challenge 1: Exploration Drift</h3>
+
+    <p>In episodic RL, exploration that leads the agent far from the goal is harmless&mdash;the next episode resets the agent to a good starting state. In the autonomous setting, there is no such safety net. Exploratory actions can cause the agent to <strong>drift far away</strong> from the region of state space where it can productively practice the task. A robot trying to learn to place a cup in a coffee machine might accidentally knock the cup off the table; without a reset, it is now in a state from which it cannot practice the original task at all.</p>
+
+    <h3 id="challenge-state-collapse">Challenge 2: State Distribution Collapse</h3>
+
+    <p>As the agent drifts further from useful states, its experience becomes concentrated in a narrow, uninformative region of the state space. The agent's state distribution <strong>collapses</strong> to states that are far from both the initial state distribution and the goal. Since the agent never returns to states from which it could practice the task, it never learns a good policy. This creates a vicious cycle: a poor policy leads to bad states, which leads to uninformative data, which leads to an even worse policy.</p>
+
+    <div class="callout example">
+      <div class="callout-label">Example</div>
+      <strong>Episodic vs. non-episodic learning.</strong> In episodic learning, the agent always gets to retry the task from the initial state distribution $\rho_0$. Even if it fails spectacularly, the next episode provides a fresh start near the goal region. In non-episodic learning, a single failure can cascade: the agent drifts away from $\rho_0$, its state distribution collapses to a region far from the goal, and it never recovers. The agent never learns a good policy.
+    </div>
+
+    <!-- Section: Forward-Backward RL -->
+    <h2 id="forward-backward-rl">Forward-Backward RL</h2>
+
+    <p>The key observation is that standard RL succeeds when the agent can frequently retry from the initial state distribution. If we cannot get manual resets, can we instead <strong>learn a policy to reset</strong>? This is the central idea behind Forward-Backward RL (FBRL).</p>
+
+    <div class="algorithm">
+      <div class="algorithm-title">Forward-Backward RL (FBRL)</div>
+      <ol>
+        <li>Initialize a <strong>forward policy</strong> $\pi_f$ and a <strong>backward policy</strong> $\pi_b$.</li>
+        <li>Repeat:
+          <ol type="a">
+            <li>Roll out $\pi_f$ for $H$ steps (attempting the task).</li>
+            <li>Update $\pi_f$ using the task reward $r_f(s, a)$.</li>
+            <li>Roll out $\pi_b$ for $H$ steps (attempting to return to $\rho_0$).</li>
+            <li>Update $\pi_b$ using a reset reward $r_b(s, a)$ that encourages reaching $\rho_0$.</li>
+            <li>No reset or very infrequent reset.</li>
+          </ol>
+        </li>
+      </ol>
+      <p><strong>Test time:</strong> Discard $\pi_b$. Deploy $\pi_f$.</p>
+    </div>
+
+    <p>The forward policy $\pi_f$ tries to accomplish the task, while the backward policy $\pi_b$ acts as a <strong>learned reset controller</strong> that returns the environment to a state near $\rho_0$ so the forward policy can try again. By alternating between forward and backward phases, the agent autonomously practices the task without human intervention.</p>
+
+    <p>FBRL is simple and effective, but has a notable limitation: the backward policy is ultimately discarded at test time. All the compute and data spent training $\pi_b$ serve only to facilitate training of $\pi_f$&mdash;the backward policy itself has no value at deployment.</p>
+
+    <h3 id="medal">MEDAL: Matching Expert Distributions for Autonomous Learning</h3>
+
+    <p>A key improvement over vanilla FBRL is to modify the backward policy's reward function. Rather than simply trying to reach a fixed initial state, the backward policy in MEDAL learns to match the <strong>state distribution found in expert demonstrations</strong>.</p>
+
+    <div class="algorithm">
+      <div class="algorithm-title">MEDAL (Matching Expert Distributions for Autonomous Learning)</div>
+      <ol>
+        <li>Given a small set of demonstrations.</li>
+        <li>Initialize forward policy $\pi_f$ and backward policy $\pi_b$.</li>
+        <li>Repeat:
+          <ol type="a">
+            <li>Roll out $\pi_f$ for $H$ steps.</li>
+            <li>Update $\pi_f$ using task reward $r_f(s, a)$.</li>
+            <li>Roll out $\pi_b$ for $H$ steps.</li>
+            <li>Update $\pi_b$ using <strong>learned reward</strong> $r_b(s, a)$.</li>
+            <li>No reset or very infrequent reset.</li>
+            <li>Update the learned reward $r_b(s, a)$ to better match the state distribution in demonstrations.</li>
+          </ol>
+        </li>
+      </ol>
+      <p><strong>Test time:</strong> Discard $\pi_b$. Deploy $\pi_f$.</p>
+    </div>
+
+    <p>MEDAL addresses both challenges of autonomous RL simultaneously:</p>
+
+    <ul>
+      <li><strong>Challenge 1 (exploration drift):</strong> The backward policy steers the agent back toward states that resemble the demonstrations, preventing it from drifting to uninformative regions.</li>
+      <li><strong>Challenge 2 (state distribution collapse):</strong> By resetting to a distribution that matches the demonstrations, the backward policy ensures that the forward policy encounters a diverse set of initial states&mdash;both easy and hard&mdash;improving sample efficiency. This connects to the theoretical insight of Kakade and Langford (ICML 2002) that training from a wide distribution of start states leads to better policies.</li>
+    </ul>
+
+    <h3 id="earl-results">Experimental Results on the EARL Benchmark</h3>
+
+    <p>The EARL benchmark (Sharma, Xu et al.; ICLR 2022) provides standardized evaluation for autonomous RL algorithms. Training involves very infrequent resets (every 200k steps), and evaluation measures the deployed policy's performance from $\rho_0$. Results on tasks like tabletop manipulation and door closing show a clear hierarchy of methods:</p>
+
+    <ul>
+      <li><strong>MEDAL</strong> achieves the best overall performance, often matching or approaching the <strong>oracle SAC</strong> baseline (which gets free episodic resets).</li>
+      <li><strong>VaPRL</strong> (goal curriculum) and <strong>FBRL</strong> (reach $\rho_0$) are competitive but slower to converge.</li>
+      <li><strong>R3L</strong> (state novelty-based reset) shows moderate performance.</li>
+      <li><strong>Non-episodic SAC</strong> (no backward policy at all) essentially fails to learn, confirming that standard RL algorithms cannot handle the autonomous setting.</li>
+    </ul>
+
+    <p>Forward-backward approaches have also been demonstrated on real robots. Vanilla FBRL has been applied with demo-initialized policies and VLM-provided rewards, while MEDAL has been used with learned rewards, both achieving autonomous training on physical manipulation tasks.</p>
+
+    <!-- Section: Task Cycles -->
+    <h2 id="task-cycles">Autonomous RL with Task Cycles</h2>
+
+    <p>An alternative to the forward-backward paradigm is to structure the training process as a <strong>cycle of related tasks</strong> that naturally reset each other. Instead of learning a separate backward policy, the agent practices multiple tasks in sequence, where completing (or failing) one task naturally sets up the initial conditions for another.</p>
+
+    <div class="callout example">
+      <div class="callout-label">Example</div>
+      <strong>Coffee-making cycle.</strong> Consider a robot learning to use a coffee machine:
+      <ul>
+        <li><strong>Task 1:</strong> Put the cup in the coffee machine.</li>
+        <li><strong>Task 2:</strong> Pick up the cup (if Task 1 succeeded, the cup is in the machine; if it failed, the cup is elsewhere).</li>
+        <li><strong>Task 3:</strong> Replace the cup on the counter.</li>
+        <li><strong>Task 4:</strong> Clean up any spill from the cup.</li>
+      </ul>
+      Notice how the outcome of each task naturally creates the preconditions for the next. Success at Task 1 leads to Task 3; failure leads to Task 2. The tasks form a cycle that the robot can traverse indefinitely without human resets.
+    </div>
+
+    <div class="algorithm">
+      <div class="algorithm-title">Autonomous RL with Task Cycles</div>
+      <ol>
+        <li>Initialize a task-conditioned policy $\pi(\cdot \mid s, z)$.</li>
+        <li>Repeat:
+          <ol type="a">
+            <li>Propose task $z_i$ to practice based on the current state $s$.</li>
+            <li>Roll out $\pi(\cdot \mid s, z_i)$ for $H$ steps.</li>
+            <li>Update $\pi$ using task reward $r(s, a, z)$.</li>
+            <li>No reset or very infrequent reset.</li>
+          </ol>
+        </li>
+      </ol>
+      <p><strong>Test time:</strong> Deploy $\pi$ conditioned on the desired task.</p>
+    </div>
+
+    <p>This approach has been demonstrated in several real-world settings:</p>
+
+    <ul>
+      <li><strong>Dexterous manipulation</strong> (Gupta, Yu, Zhao, Kumar, Rovinsky, Xu, Devlin, Levine; 2021): A robot hand learns to re-center, flip, lift, and rotate objects in a cycle, with each manipulation naturally setting up the next.</li>
+      <li><strong>Legged locomotion</strong> (Smith, Kew, Peng, Ha, Tan, Levine; 2021): A quadruped robot fine-tunes locomotion skills in the real world by cycling through forward and backward walking, turns, and other gaits.</li>
+      <li><strong>Multi-step manipulation</strong> (Han, Levine, Abbeel): A PR2 robot learns a 7-stage wrench task by cycling through the stages, where the forward execution of each stage naturally leads into the next.</li>
+    </ul>
+
+    <h3 id="task-selection">Task Proposal: An Open Research Question</h3>
+
+    <p>A critical question in the task-cycle approach is: <em>how does the agent decide which task to practice next?</em> Given its current state, the agent must identify which task is both (a) feasible from the current state and (b) useful for improving its overall competence.</p>
+
+    <p>This is generally an open research question. One promising approach, explored in SOAR (Zhou, Atreya, Lee, Walke, Mees, Levine), is to <strong>ask a vision-language model</strong>. Given the current observation, a VLM can identify what tasks are possible in the current state and suggest which one the robot should practice. This leverages the VLM's broad world knowledge to guide the autonomous training process.</p>
+
+    <h3 id="forward-forward">Forward-Forward RL</h3>
+
+    <p>A third alternative is to design the task setup so that it can be done <strong>repetitively</strong> without any explicit reset. For instance, if a robot's task is to push an object back and forth between two positions, completing the forward push naturally sets up the backward push, and vice versa. This "forward-forward" approach avoids the need for either a backward policy or a task cycle, but requires careful environment design to ensure the task is inherently cyclical.</p>
+
+    <!-- Section: Single-Life RL -->
+    <h2 id="single-life-rl">Single-Life Reinforcement Learning</h2>
+
+    <p>The autonomous RL methods discussed so far focus on the <em>training</em> phase: how to collect data without human resets. But what happens after training, when the policy is <em>deployed</em> in the real world?</p>
+
+    <p>In a controlled training environment, things go roughly as planned. But the real world is complex, and the deployment environment will inevitably differ from the training environment. The robot may encounter novel objects, unexpected obstacles, or different lighting conditions. Even humans make mistakes and must adapt on the fly&mdash;consider the mundane experience of approaching a door, finding it locked, and adjusting your strategy to use a key. Can robots do the same?</p>
+
+    <div class="callout definition">
+      <div class="callout-label">Definition</div>
+      <strong>Single-Life Reinforcement Learning (SLRL).</strong> A setting where the agent has access to prior training data from one or more training environments, and must complete a task in a novel, potentially out-of-distribution test environment in a single continuous episode (a single "life"). The agent has one chance to autonomously complete the task, with no resets and no human intervention.
+    </div>
+
+    <p>SLRL differs from both episodic RL and reset-free RL in a fundamental way:</p>
+
+    <ul>
+      <li><strong>Episodic RL:</strong> Multiple episodes in both training and testing, with resets between episodes.</li>
+      <li><strong>Reset-free RL:</strong> A single long episode during training (no resets), but the training and test environments are the same.</li>
+      <li><strong>Single-life RL:</strong> Prior training data is available, but the agent has only one episode in a <em>novel</em> test environment. It must adapt on the fly.</li>
+    </ul>
+
+    <h3 id="slrl-challenges">Why Vanilla RL Fails at Test Time</h3>
+
+    <p>A natural approach is to simply run fine-tuning with RL at test time, using the test-environment reward signal. However, this typically fails: the agent encounters out-of-distribution states early in the episode, makes errors that compound, and drifts into irrecoverable states before the RL algorithm can meaningfully update the policy. Without resets, a single mistake can doom the entire episode.</p>
+
+    <h3 id="slrl-approaches">Approaches to Single-Life RL</h3>
+
+    <p>Several ideas can help make single-life RL feasible:</p>
+
+    <ol>
+      <li><strong>Guiding the agent toward familiar states.</strong> Rather than relying on unconstrained exploration, add an auxiliary objective that steers the agent toward states that resemble those in the prior training data (Chen, Sharma, Levine, Finn; NeurIPS 2022). This prevents the catastrophic drift that occurs with vanilla test-time RL.</li>
+      <li><strong>Adaptation in skill space, not action space.</strong> If the agent has pre-trained skills (e.g., from hierarchical training), it can adapt at the level of skill selection rather than individual actions. This dramatically reduces the search space for adaptation. For example, RMA (Kumar, Fu, Pathak, Malik; RSS 2021) enables legged robots to rapidly adapt their locomotion by adjusting a small number of latent parameters rather than relearning from scratch.</li>
+      <li><strong>Leveraging foundation models for reasoning.</strong> Pre-trained LLMs or VLMs can reason about how to adapt behavior in novel scenarios without requiring extensive environment interaction. For instance, Chen, Lessing, Tang, Chada, Smith, Levine, and Finn (ICRA 2025) use vision-language models to provide commonsense reasoning for legged robot adaptation, enabling the robot to identify and respond to environmental changes that it has never encountered during training.</li>
+    </ol>
+
+    <div class="callout insight">
+      <div class="callout-label">Key Insight</div>
+      The core challenge of single-life RL is that exploration and exploitation cannot be separated in time. Unlike standard RL, where the agent can explore freely during training and exploit during testing, a single-life agent must do both simultaneously in a novel environment. Every exploratory action has real consequences that cannot be undone.
+    </div>
+
+    <!-- Section: Summary -->
+    <h2 id="summary">Summary</h2>
+
+    <p>This lecture examined the unique challenges of applying reinforcement learning to physical robots that must operate and learn in the real world. The key ideas are:</p>
+
+    <ol>
+      <li><strong>The reset problem.</strong> Standard RL assumes free environment resets between episodes. On real robots, resets require human supervision, creating a fundamental bottleneck.</li>
+      <li><strong>Autonomous RL.</strong> By eliminating or minimizing resets, autonomous RL enables robots to train with minimal human intervention. However, this introduces two new challenges: exploration drift and state distribution collapse.</li>
+      <li><strong>Forward-backward RL.</strong> Training a backward policy to return the agent to good starting states is a simple and effective approach. MEDAL improves on vanilla FBRL by learning a reward function that matches the backward policy's state distribution to that of expert demonstrations.</li>
+      <li><strong>Task cycles.</strong> Structuring training as a cycle of related tasks that naturally reset each other provides an elegant alternative to explicit backward policies. Choosing which task to practice next remains an open research question, with VLMs offering a promising direction.</li>
+      <li><strong>Single-life RL.</strong> After training, the agent must adapt to novel environments in a single episode. Guiding exploration toward familiar states, adapting in skill space rather than action space, and leveraging foundation models for reasoning are key strategies for this challenging setting.</li>
+    </ol>
+
+    <p>The overarching goal&mdash;building autonomous agents that can learn and interact in the real world&mdash;remains one of the most important and challenging problems in deep RL. The algorithms covered in this lecture represent the current frontier, but many open problems remain, particularly around scaling these methods to diverse, unstructured real-world environments.</p>
+
   </article>
 
   <nav class="lecture-nav">

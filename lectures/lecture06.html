@@ -46,14 +46,278 @@
       <span class="lecture-tag">Target Networks</span>
       <span class="lecture-tag">Double DQN</span>
     </div>
-    <a class="lecture-pdf-link" href="../slides/cs224r_2025_lecture6.pdf" target="_blank">
+    <a class="lecture-pdf-link" href="../slides/06_cs224r_qlearning_2025.pdf" target="_blank">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
       Original PDF slides
     </a>
   </div>
 
   <article class="lecture-article">
-    <!-- Content will be added in Phase 3 -->
+
+    <h2 id="from-actor-critic-to-q-learning">From Actor-Critic to Pure Value-Based Methods</h2>
+    <p>
+      In Lectures 4 and 5 we studied actor-critic algorithms that maintain both a policy $\pi_\theta$ (actor) and a value function $Q_\phi$ (critic). A natural question arises: <em>do we even need the actor?</em> If we have a good estimate of the optimal action-value function $\Qstar(s, a)$, the optimal policy is simply
+    </p>
+    $$\pi^*(a \mid s) = \begin{cases} 1 & \text{if } a = \arg\max_{a'} \Qstar(s, a'), \\ 0 & \text{otherwise.}\end{cases}$$
+    <p>
+      This observation is the foundation of <strong>Q-learning</strong>: learn $\Qstar$ directly, and extract the policy by taking the $\arg\max$. No separate policy network is needed. The approach is conceptually simple, extremely powerful for discrete action spaces, and led to one of the landmark results in deep RL&mdash;the DQN agent that learned to play Atari games from raw pixels.
+    </p>
+
+    <h2 id="q-learning-basics">Tabular Q-Learning</h2>
+    <p>
+      The classical Q-learning update (Watkins, 1989) maintains a table $Q(s, a)$ for every state-action pair and updates it using the Bellman optimality equation:
+    </p>
+    $$Q(s, a) \leftarrow Q(s, a) + \alpha\!\left[r + \gamma \max_{a'} Q(s', a') - Q(s, a)\right].$$
+
+    <div class="callout definition">
+      <div class="callout-label">Definition: Bellman Optimality Equation</div>
+      <p>The optimal action-value function satisfies</p>
+      $$\Qstar(s, a) = r(s, a) + \gamma\, \E_{s' \sim p(\cdot|s,a)}\!\left[\max_{a'} \Qstar(s', a')\right].$$
+      <p>This is a fixed-point equation: $\Qstar$ is the unique function satisfying it. Q-learning can be viewed as stochastic fixed-point iteration toward this solution.</p>
+    </div>
+
+    <p>
+      A remarkable property of Q-learning is that it is <strong>off-policy by nature</strong>: the update uses $\max_{a'} Q(s', a')$ regardless of which action the agent actually took. This means we can learn $\Qstar$ from data collected by <em>any</em> exploratory policy (e.g., $\epsilon$-greedy), as long as every state-action pair is visited infinitely often. In the tabular setting, Q-learning converges to $\Qstar$ under mild conditions.
+    </p>
+
+    <h2 id="fitted-q-iteration">Fitted Q-Iteration</h2>
+    <p>
+      For large or continuous state spaces, we cannot maintain a table. Instead, we approximate $\Qstar$ with a parameterised function $Q_\phi(s, a)$&mdash;typically a neural network. The <strong>fitted Q-iteration</strong> algorithm is the batch version of approximate Q-learning:
+    </p>
+
+    <div class="algorithm">
+      <div class="algorithm-title">Fitted Q-Iteration</div>
+      <ol>
+        <li>Collect a dataset $\mathcal{D} = \{(s_j, a_j, r_j, s_j')\}$ using some exploration policy.</li>
+        <li><strong>Repeat until convergence:</strong>
+          <ol>
+            <li>Compute targets: $y_j = r_j + \gamma \max_{a'} Q_\phi(s_j', a')$ for all $(s_j, a_j, r_j, s_j') \in \mathcal{D}$.</li>
+            <li>Update $\phi$ by regression: $\phi \leftarrow \arg\min_\phi \sum_j \bigl(Q_\phi(s_j, a_j) - y_j\bigr)^2$.</li>
+          </ol>
+        </li>
+      </ol>
+    </div>
+
+    <p>
+      Note the key subtlety: the targets $y_j$ depend on the current parameters $\phi$, making this a <strong>moving-target regression</strong> problem. Each time we update $\phi$, the targets shift. In the tabular case this converges, but with function approximation, convergence is <em>not guaranteed</em>&mdash;the combination of bootstrapping, function approximation, and off-policy data is notoriously unstable (the "deadly triad").
+    </p>
+
+    <h2 id="dqn">Deep Q-Networks (DQN)</h2>
+    <p>
+      The <strong>DQN</strong> algorithm (Mnih et al., 2013, 2015) demonstrated that deep Q-learning can work at scale by introducing two critical stabilisation techniques: <strong>experience replay</strong> and <strong>target networks</strong>. DQN learned to play 49 Atari games from raw pixel inputs, achieving human-level performance on many of them&mdash;a breakthrough that catalysed the modern deep RL era.
+    </p>
+
+    <h3 id="experience-replay">Experience Replay</h3>
+    <p>
+      DQN stores every transition $(s, a, r, s')$ in a large <strong>replay buffer</strong> $\mathcal{D}$ (typically holding the last $10^6$ transitions) and samples uniformly random mini-batches for training. Experience replay serves two purposes:
+    </p>
+    <ul>
+      <li><strong>Data efficiency:</strong> Each transition is used for many gradient updates instead of being discarded after one.</li>
+      <li><strong>Breaking correlations:</strong> Consecutive transitions in a trajectory are highly correlated. Training on sequential data causes the network to overfit to recent experience and forget earlier lessons. Random sampling from the buffer produces approximately i.i.d. mini-batches, which is what stochastic gradient descent assumes.</li>
+    </ul>
+
+    <div class="callout insight">
+      <div class="callout-label">Key Insight: Replay as Regularisation</div>
+      <p>Experience replay can be understood as a form of <em>implicit regularisation</em>. By training on a diverse mix of old and new transitions, the Q-network is forced to maintain accurate predictions across the entire state space rather than just the states currently being visited. This dramatically reduces the catastrophic forgetting that plagues online neural-network training.</p>
+    </div>
+
+    <h3 id="target-networks">Target Networks</h3>
+    <p>
+      The second stabilisation technique is the <strong>target network</strong>. Instead of computing the TD target using the current Q-network $Q_\phi$, DQN maintains a separate <strong>target network</strong> $Q_{\phi^-}$ whose parameters are copied from $Q_\phi$ every $C$ steps (typically $C = 10{,}000$):
+    </p>
+    $$y_j = r_j + \gamma \max_{a'} Q_{\phi^-}(s_j', a').$$
+
+    <p>
+      Between copies, $\phi^-$ is <strong>frozen</strong>. This breaks the harmful feedback loop where the Q-network chases its own rapidly changing predictions. With a fixed target, each phase of training reduces to a standard supervised regression problem.
+    </p>
+
+    <div class="callout definition">
+      <div class="callout-label">Definition: Polyak Averaging (Soft Target Updates)</div>
+      <p>An alternative to hard copying every $C$ steps is <strong>Polyak averaging</strong>, where the target network is updated after every step as a slow-moving exponential average:</p>
+      $$\phi^- \leftarrow \tau\, \phi + (1 - \tau)\, \phi^-, \quad \tau \ll 1.$$
+      <p>Typical values are $\tau \in [0.001, 0.01]$. This produces smoother target changes and is used by DDPG, TD3, and SAC.</p>
+    </div>
+
+    <h3 id="dqn-algorithm">The DQN Algorithm</h3>
+
+    <div class="algorithm">
+      <div class="algorithm-title">Deep Q-Network (DQN)</div>
+      <ol>
+        <li>Initialise Q-network $Q_\phi$ and target network $Q_{\phi^-} \leftarrow Q_\phi$.</li>
+        <li>Initialise replay buffer $\mathcal{D}$.</li>
+        <li><strong>For each environment step $t = 1, 2, \ldots$:</strong>
+          <ol>
+            <li>With probability $\epsilon$ select random action $a_t$; otherwise $a_t = \arg\max_a Q_\phi(s_t, a)$.</li>
+            <li>Execute $a_t$, observe $r_t, s_{t+1}$. Store $(s_t, a_t, r_t, s_{t+1})$ in $\mathcal{D}$.</li>
+            <li>Sample mini-batch $\{(s_j, a_j, r_j, s_j')\}$ from $\mathcal{D}$.</li>
+            <li>Compute targets: $y_j = r_j + \gamma \max_{a'} Q_{\phi^-}(s_j', a')$.</li>
+            <li>Update: $\phi \leftarrow \phi - \alpha \nabla_\phi \frac{1}{|\mathcal{B}|}\sum_j (Q_\phi(s_j, a_j) - y_j)^2$.</li>
+            <li>Every $C$ steps: $\phi^- \leftarrow \phi$.</li>
+          </ol>
+        </li>
+      </ol>
+    </div>
+
+    <div class="callout example">
+      <div class="callout-label">Example: DQN on Atari</div>
+      <p>The original DQN used a convolutional neural network that takes a stack of four $84 \times 84$ grayscale frames as input and outputs Q-values for each of the 18 possible joystick actions. The replay buffer held $10^6$ transitions. Training ran for 50 million frames (about 38 days of game time) with $\epsilon$ annealed from 1.0 to 0.1 over the first million frames. The same architecture and hyperparameters were used across all 49 games&mdash;no game-specific tuning.</p>
+    </div>
+
+    <h2 id="overestimation-bias">The Overestimation Problem</h2>
+    <p>
+      Q-learning uses $\max_{a'} Q_\phi(s', a')$ to form the TD target. When $Q_\phi$ contains approximation errors (which it always does with function approximation), the $\max$ operator introduces a systematic <strong>positive bias</strong>.
+    </p>
+
+    <div class="callout theorem">
+      <div class="callout-label">Theorem: Overestimation Under Noise</div>
+      <p>Let $Q_\phi(s', a') = \Qstar(s', a') + \epsilon_{a'}$ where $\epsilon_{a'}$ are zero-mean noise terms. Then</p>
+      $$\E\!\left[\max_{a'} Q_\phi(s', a')\right] \geq \max_{a'} \Qstar(s', a').$$
+      <p>The inequality is strict whenever the noise terms are non-degenerate. The bias grows with the number of actions and the magnitude of the noise.</p>
+    </div>
+
+    <details>
+      <summary>Proof sketch</summary>
+      <p>By Jensen's inequality applied to the convex function $\max$:</p>
+      $$\E[\max_{a'} Q_\phi(s', a')] = \E[\max_{a'}(\Qstar(s', a') + \epsilon_{a'})] \geq \max_{a'} \E[\Qstar(s', a') + \epsilon_{a'}] = \max_{a'} \Qstar(s', a'),$$
+      <p>since each $\epsilon_{a'}$ has zero mean. The inequality is strict when the $\epsilon_{a'}$ are non-degenerate because $\max$ is strictly convex over distributions with non-trivial support. Intuitively, the $\max$ operation preferentially selects the action whose Q-value is <em>most overestimated</em>, systematically inflating the target.</p>
+    </details>
+
+    <p>
+      This overestimation compounds through the Bellman backup: overestimated targets lead to overestimated Q-values, which produce even more overestimated targets. The result can be dramatic: Q-values may diverge to unreasonably large magnitudes, leading to poor policies that chase phantom high-value actions.
+    </p>
+
+    <h2 id="double-dqn">Double DQN</h2>
+    <p>
+      <strong>Double Q-learning</strong> (Van Hasselt, 2010) addresses overestimation by <strong>decoupling action selection from action evaluation</strong>. The key idea is to use the <em>current</em> network to select the best action, but the <em>target</em> network to evaluate it:
+    </p>
+    $$y_j^{\text{DDQN}} = r_j + \gamma\, Q_{\phi^-}\!\bigl(s_j',\, \arg\max_{a'} Q_\phi(s_j', a')\bigr).$$
+
+    <div class="callout insight">
+      <div class="callout-label">Key Insight: Why Double DQN Works</div>
+      <p>Standard DQN uses the same network for both selecting and evaluating the best action: $\max_{a'} Q_{\phi^-}(s', a')$. If $Q_{\phi^-}$ overestimates the value of some action $a'$, that same overestimation directly enters the target. Double DQN breaks this coupling: even if $Q_\phi$ selects an overestimated action, $Q_{\phi^-}$ provides an independent evaluation that is unlikely to share the same bias. The result is a more accurate, less inflated target.</p>
+    </div>
+
+    <p>
+      Double DQN (Van Hasselt et al., 2016) integrates this idea into the DQN framework with minimal changes&mdash;only the target computation differs. It requires no additional networks or computation, yet consistently reduces overestimation and improves performance across Atari games.
+    </p>
+
+    <h2 id="dqn-extensions">Further DQN Extensions</h2>
+
+    <h3 id="multi-step-returns">Multi-Step Returns</h3>
+    <p>
+      Just as we used $n$-step returns for advantage estimation in actor-critic methods, we can use them for Q-learning targets:
+    </p>
+    $$y_j^{(n)} = \sum_{l=0}^{n-1} \gamma^l r_{t+l} + \gamma^n \max_{a'} Q_{\phi^-}(s_{t+n}, a').$$
+    <p>
+      Multi-step targets propagate reward information faster (reducing the number of Bellman backups needed to propagate a distant reward) at the cost of introducing some off-policy bias (the intermediate actions may not be optimal). In practice, $n = 3$ to $5$ often works well, and the speed-up in learning can be substantial.
+    </p>
+
+    <h3 id="dueling-dqn">Dueling DQN</h3>
+    <p>
+      The <strong>dueling architecture</strong> (Wang et al., 2016) modifies the network structure to separately estimate the <strong>state-value</strong> $V(s)$ and the <strong>advantage</strong> $A(s, a)$:
+    </p>
+    $$Q_\phi(s, a) = V_\psi(s) + A_\xi(s, a) - \frac{1}{|\mathcal{A}|}\sum_{a'} A_\xi(s, a').$$
+    <p>
+      The subtraction of the mean advantage ensures identifiability (otherwise $V$ and $A$ are only determined up to an additive constant). The intuition is that in many states, the choice of action matters little&mdash;the state value dominates. The dueling architecture can learn $V(s)$ efficiently from all transitions, even those where the action choice was irrelevant.
+    </p>
+
+    <div class="callout example">
+      <div class="callout-label">Example: When Dueling Helps</div>
+      <p>In the Atari game "Enduro" (a racing game), the agent spends most of its time driving straight. In these states, all actions (left, right, accelerate) yield similar Q-values&mdash;the state value is what matters. The dueling architecture can learn this shared value efficiently, focusing the advantage stream only on the states where action selection truly matters (e.g., approaching another car).</p>
+    </div>
+
+    <h3 id="prioritized-replay">Prioritized Experience Replay</h3>
+    <p>
+      Standard experience replay samples transitions uniformly from the buffer. <strong>Prioritized experience replay</strong> (Schaul et al., 2016) instead samples transitions proportionally to their <strong>TD error</strong>:
+    </p>
+    $$p_j \propto \bigl|Q_\phi(s_j, a_j) - y_j\bigr|^\alpha,$$
+    <p>
+      where $\alpha$ controls the degree of prioritisation ($\alpha = 0$ reduces to uniform sampling). Transitions with large TD errors are "surprising"&mdash;the network's predictions are most wrong on these examples, so there is the most to learn from them.
+    </p>
+    <p>
+      Because prioritised sampling changes the data distribution, we must correct for this bias using <strong>importance sampling weights</strong>:
+    </p>
+    $$w_j = \left(\frac{1}{N \cdot p_j}\right)^\beta,$$
+    <p>
+      where $\beta$ is annealed from a small value to $1$ over training. These weights are applied to the loss function to ensure that the expected gradient remains unbiased.
+    </p>
+
+    <div class="callout insight">
+      <div class="callout-label">Key Insight: Rainbow DQN</div>
+      <p>The <strong>Rainbow</strong> agent (Hessel et al., 2018) combines six DQN extensions: Double DQN, dueling architecture, prioritized replay, multi-step returns, distributional RL, and noisy networks. The combination is significantly better than any individual component, demonstrating that these improvements are largely complementary. Rainbow achieved state-of-the-art Atari performance at the time, dramatically outperforming vanilla DQN.</p>
+    </div>
+
+    <h2 id="continuous-actions">Q-Learning with Continuous Actions</h2>
+    <p>
+      The $\arg\max$ operation in Q-learning is trivial for discrete actions (just enumerate all actions), but becomes a difficult optimisation problem for <strong>continuous action spaces</strong>. Several approaches have been proposed:
+    </p>
+
+    <h3 id="optimisation-approach">Approach 1: Numerical Optimisation</h3>
+    <p>
+      Directly optimise $\max_a Q_\phi(s, a)$ using gradient ascent on $a$. This requires differentiating through the Q-network with respect to the action input. While conceptually simple, this is slow (requiring multiple gradient steps per action selection) and may find local optima.
+    </p>
+
+    <h3 id="sampling-approach">Approach 2: Sampling-Based Methods</h3>
+    <p>
+      Use <strong>derivative-free optimisation</strong> such as the Cross-Entropy Method (CEM) or CMA-ES:
+    </p>
+    <ol>
+      <li>Sample $N$ actions from a distribution (e.g., Gaussian).</li>
+      <li>Evaluate $Q_\phi(s, a)$ for each.</li>
+      <li>Refit the distribution to the top-$k$ actions (elites).</li>
+      <li>Repeat for a few iterations.</li>
+    </ol>
+    <p>
+      CEM is surprisingly effective in practice and is used by several model-based RL methods. However, it scales poorly with action dimensionality.
+    </p>
+
+    <h3 id="learned-model-approach">Approach 3: Architectures with Tractable Maxima</h3>
+    <p>
+      Design the Q-network so that $\arg\max_a Q_\phi(s, a)$ has a <strong>closed-form solution</strong>. The <strong>Normalised Advantage Function (NAF)</strong> (Gu et al., 2016) parameterises the Q-function as a quadratic in $a$:
+    </p>
+    $$Q_\phi(s, a) = V_\psi(s) - \frac{1}{2}(a - \mu_\xi(s))^\top P_\xi(s) (a - \mu_\xi(s)),$$
+    <p>
+      where $P_\xi(s)$ is a positive-definite matrix. The maximum is trivially at $a^* = \mu_\xi(s)$. The drawback is that the quadratic form limits expressiveness&mdash;the Q-function may not capture complex, multimodal action-value landscapes.
+    </p>
+
+    <div class="callout insight">
+      <div class="callout-label">Key Insight: Q-Learning vs. Actor-Critic for Continuous Control</div>
+      <p>For continuous action spaces, actor-critic methods (DDPG, TD3, SAC) are generally preferred over pure Q-learning because they avoid the difficult $\arg\max$ problem entirely&mdash;the actor network directly outputs actions. However, Q-learning retains advantages in discrete-action domains (board games, Atari, language) where the $\arg\max$ is trivial and maintaining a separate policy network is unnecessary overhead.</p>
+    </div>
+
+    <h2 id="practical-considerations">Practical Considerations</h2>
+
+    <h3 id="exploration-strategies">Exploration in Q-Learning</h3>
+    <p>
+      DQN uses <strong>$\epsilon$-greedy</strong> exploration: with probability $\epsilon$, take a random action; otherwise, take the greedy action $\arg\max_a Q_\phi(s, a)$. The exploration rate $\epsilon$ is typically annealed from 1.0 (fully random) to a small value (e.g., 0.01) over training. While simple, $\epsilon$-greedy can be inefficient in environments requiring directed exploration.
+    </p>
+
+    <h3 id="replay-buffer-size">Replay Buffer Size</h3>
+    <p>
+      The buffer size trades off memory usage against data diversity. Too small a buffer leads to overfitting on recent transitions and catastrophic forgetting of earlier experience. Too large a buffer includes very stale data that may slow learning. For Atari, $10^6$ transitions (roughly 4 days of gameplay) is standard. For continuous control tasks, $10^5$ to $10^6$ is typical.
+    </p>
+
+    <h3 id="target-update-frequency">Target Network Update Frequency</h3>
+    <p>
+      With hard updates every $C$ steps, larger $C$ provides more stable targets but slower propagation of learned values. With soft updates (Polyak averaging), the parameter $\tau$ plays the analogous role. In either case, this hyperparameter significantly affects learning speed and stability.
+    </p>
+
+    <h2 id="summary">Summary</h2>
+    <p>
+      This lecture covered Q-learning&mdash;the foundational value-based approach to deep RL. The key ideas are:
+    </p>
+    <ul>
+      <li><strong>Q-learning</strong> learns $\Qstar$ directly and extracts the policy via $\arg\max$, eliminating the need for a separate actor network.</li>
+      <li><strong>DQN</strong> made deep Q-learning practical through <strong>experience replay</strong> (breaking correlations, reusing data) and <strong>target networks</strong> (stabilising the moving-target regression).</li>
+      <li>The <strong>overestimation bias</strong> from the $\max$ operator is addressed by <strong>Double DQN</strong>, which decouples action selection from evaluation.</li>
+      <li><strong>Dueling DQN</strong> separates state-value and advantage estimation, improving learning efficiency in states where the action choice matters little.</li>
+      <li><strong>Prioritized experience replay</strong> focuses training on the most informative transitions.</li>
+      <li>For <strong>continuous actions</strong>, the $\arg\max$ is the main bottleneck; actor-critic methods generally dominate in this setting.</li>
+    </ul>
+    <p>
+      Q-learning and actor-critic represent two complementary paradigms in deep RL. Actor-critic methods are more natural for continuous control, while Q-learning excels in discrete-action domains. In the next lecture, we move to <strong>offline RL</strong>, where the agent must learn entirely from a fixed dataset without any further environment interaction&mdash;a setting where both paradigms face new challenges.
+    </p>
+
   </article>
 
   <nav class="lecture-nav">

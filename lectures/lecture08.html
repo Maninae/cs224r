@@ -46,14 +46,281 @@
       <span class="lecture-tag">Preference Learning</span>
       <span class="lecture-tag">Reward Modeling</span>
     </div>
-    <a class="lecture-pdf-link" href="../slides/cs224r_2025_lecture8.pdf" target="_blank">
+    <a class="lecture-pdf-link" href="../slides/08_cs224r_reward_learning_2025.pdf" target="_blank">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
       Original PDF slides
     </a>
   </div>
 
   <article class="lecture-article">
-    <!-- Content will be added in Phase 3 -->
+
+    <!-- Section 1: The Reward Problem -->
+    <h2 id="reward-problem">Where Does the Reward Come From?</h2>
+
+    <p>Every reinforcement learning algorithm we have studied so far takes the reward function as given. In Atari games, the reward is the score on screen. In simulated robotics, the reward is a hand-coded function measuring distance to a goal. But what about <em>real-world</em> problems?</p>
+
+    <p>Consider the following domains: a robot manipulating objects in a kitchen, a dialogue agent that should be helpful and harmless, or an autonomous vehicle navigating traffic. In each case, the question "what is the reward?" has no obvious answer. The true objective is complex, multi-faceted, and difficult to express as a mathematical function. In practice, engineers often resort to <strong>proxy rewards</strong>&mdash;simplified approximations that are easy to compute but may not capture the full intent. Optimizing a proxy reward can lead to unexpected and undesirable behaviors, a phenomenon sometimes called <strong>reward hacking</strong>.</p>
+
+    <div class="callout insight">
+      <div class="callout-label">Key Insight</div>
+      The reward function is the single most important specification in an RL system&mdash;it defines <em>what</em> the agent should do. Yet in most real-world settings, rewards cannot be taken for granted. Task specification is hard, and getting it wrong can be catastrophic. This lecture covers methods for learning rewards from human supervision.
+    </div>
+
+    <p>We have already seen one alternative to hand-designed rewards: <strong>imitation learning</strong>, where the agent mimics an expert's actions. But imitation learning has limitations&mdash;it does not reason about outcomes or dynamics, the expert may have different capabilities than the agent, and demonstrations may not always be available. Can we do better?</p>
+
+    <!-- Section 2: Learning Rewards from Goals -->
+    <h2 id="goal-classifiers">Learning Rewards from Goal Examples</h2>
+
+    <p>Perhaps the simplest form of reward learning is to learn a <strong>goal classifier</strong>&mdash;a binary classifier that distinguishes goal states from non-goal states, whose output serves as a reward signal.</p>
+
+    <h3 id="goal-classifier-basics">The Basic Approach</h3>
+
+    <p>The idea is straightforward:</p>
+
+    <div class="algorithm">
+      <div class="algorithm-title">Goal Classifier as Reward</div>
+      <ol>
+        <li>Collect examples of successful states (inside goal set $G$) and unsuccessful states (outside $G$).</li>
+        <li>Train a binary classifier $C_\psi(s)$ with inputs $s_i$ and labels $\mathbf{1}(s_i \in G)$.</li>
+        <li>Run RL with $C_\psi(s)$ as the reward function.</li>
+      </ol>
+    </div>
+
+    <div class="callout example">
+      <div class="callout-label">Example</div>
+      <strong>Robotic Manipulation.</strong> Consider a task where a robot must place a pencil case behind a notebook. We collect images of successful arrangements (positive examples) and unsuccessful ones (negative examples), train a binary classifier on these images, and use the classifier's output probability as the reward signal for RL.
+    </div>
+
+    <h3 id="classifier-exploitation">The Exploitation Problem</h3>
+
+    <p>There is a fundamental problem with using a static classifier as a reward: the RL algorithm will seek out states where the classifier outputs a high value. It may simply find states that the classifier <em>was not trained on</em>&mdash;effectively exploiting the classifier's weaknesses rather than achieving the actual goal. This is a form of reward hacking that is especially pernicious because neural network classifiers can be confidently wrong on out-of-distribution inputs.</p>
+
+    <div class="callout insight">
+      <div class="callout-label">Key Insight</div>
+      Any learned reward function is a model, and models have errors. When an RL agent optimizes against a learned reward, it will exploit those errors. This is a recurring theme: the same distributional shift problem from offline RL appears here in a different guise. The policy visits states that the reward model was never trained on.
+    </div>
+
+    <h3 id="adversarial-classifier">Adversarial Classifier Training</h3>
+
+    <p>The solution is to <strong>update the classifier during RL</strong>, using the states the policy visits as negative examples. This prevents the RL agent from exploiting the classifier because any states it discovers will immediately be incorporated into the classifier's training data.</p>
+
+    <div class="algorithm">
+      <div class="algorithm-title">Adversarial Goal Classifier</div>
+      <ol>
+        <li>Collect an initial set of successful states $D_+$ and unsuccessful states $D_-$.</li>
+        <li>Update the classifier using $D_+$ and $D_-$ (balance the dataset 50/50).</li>
+        <li>Collect experience $s_t, a_t, \ldots$ using the current policy $\pi$.</li>
+        <li>Update policy $\pi$ using the classifier-based reward.</li>
+        <li>Add visited states to negatives: $D_- \leftarrow D_- \cup \{s_t\}$.</li>
+      </ol>
+      <p>Repeat steps 2-5.</p>
+    </div>
+
+    <p>A subtle question arises: what if some of the visited states <em>are</em> actually successful? Won't labeling them as negatives confuse the classifier? The key observation is that as long as the batches are balanced (50% positive, 50% negative), the classifier will output $p \geq 0.5$ for truly successful states, since they appear in both the positive and negative sets. The classifier cannot be exploited, and successful states still receive a positive reward signal.</p>
+
+    <h3 id="gan-connection">Connection to Generative Adversarial Networks</h3>
+
+    <p>This adversarial training scheme is closely related to <strong>Generative Adversarial Networks (GANs)</strong>. In a GAN, a discriminator (classifier) learns to distinguish real data from generated data, while a generator learns to produce data the discriminator thinks is real. In our setting, the classifier plays the role of the discriminator, and the RL policy plays the role of the generator&mdash;trying to reach states that the classifier thinks are goals. At convergence, the generator (policy) should match the distribution of goal states, just as a GAN generator matches the data distribution.</p>
+
+    <div class="callout example">
+      <div class="callout-label">Example</div>
+      <strong>Self-Improving Robots.</strong> Sharma, Ahmed, Ahmad, and Finn (2023) applied this approach to real-world robotic learning. Starting with 50 demonstrations, they used the final states as success examples and initialized the RL replay buffer with the demo data. The RL policy trained with a learned classifier achieved a <strong>62% success rate</strong>, compared to only <strong>26% success rate</strong> for direct imitation of the demonstrations. Regularization of the classifier proved important for stable training.
+    </div>
+
+    <h3 id="goal-classifier-summary">Strengths and Limitations</h3>
+
+    <p>Goal classifiers provide a practical framework for task specification:</p>
+    <ul>
+      <li><strong>Strengths:</strong> Only requires examples of desired outcomes (not full demonstrations of how to achieve them). The adversarial training prevents exploitation.</li>
+      <li><strong>Limitations:</strong> Adversarial training can be unstable (though regularization tricks from the GAN literature help). Requires examples of desired behavior or outcomes, which may not always be available.</li>
+    </ul>
+
+    <!-- Section 3: The Preference Framework -->
+    <h2 id="preference-framework">Learning Rewards from Human Preferences</h2>
+
+    <p>Goal classifiers require examples of successful outcomes. But what if we cannot even provide those? What if the task is so nuanced that it is difficult to specify what "success" looks like, but easy to say which of two outcomes is <em>better</em>?</p>
+
+    <p>This motivates <strong>preference-based reward learning</strong>: instead of asking humans for demonstrations or goal examples, we ask them to compare pairs of behaviors and say which one they prefer. This type of relative judgment is often much easier for humans to provide than absolute evaluations or demonstrations.</p>
+
+    <div class="callout definition">
+      <div class="callout-label">Definition</div>
+      <strong>Preference-Based Reward Learning.</strong> Given a set of pairwise comparisons $\{\tau_w \succ \tau_l\}$ where $\tau_w$ is preferred over $\tau_l$, learn a reward function $r_\theta(s, a)$ such that preferred trajectories have higher cumulative reward:
+      $$\sum_{(s,a) \in \tau_w} r_\theta(s, a) > \sum_{(s,a) \in \tau_l} r_\theta(s, a)$$
+      Here $\tau$ can be a full trajectory or a partial segment.
+    </div>
+
+    <p>The key insight is that humans are performing a <em>classification</em> task&mdash;deciding which trajectory is better. The reward function should be discriminative in the same way. This leads to a natural probabilistic formulation.</p>
+
+    <!-- Section 4: The Bradley-Terry Model -->
+    <h2 id="bradley-terry">The Bradley-Terry Model for Preferences</h2>
+
+    <p>To turn pairwise comparisons into a learning objective, we use the <strong>Bradley-Terry model</strong>, a classical model from the statistics of paired comparisons. The model defines the probability that trajectory $\tau_a$ is preferred over $\tau_b$ as:</p>
+
+    $$P(\tau_a \succ \tau_b) = \sigma\!\left(r_\theta(\tau_a) - r_\theta(\tau_b)\right)$$
+
+    <p>where $\sigma$ is the sigmoid function and $r_\theta(\tau) = \sum_{(s,a) \in \tau} r_\theta(s, a)$ is the cumulative reward of trajectory $\tau$ under the reward model.</p>
+
+    <div class="callout definition">
+      <div class="callout-label">Definition</div>
+      <strong>Bradley-Terry Model.</strong> The probability that trajectory $\tau_a$ is preferred over trajectory $\tau_b$ is modeled as:
+      $$P(\tau_a \succ \tau_b) = \frac{\exp(r_\theta(\tau_a))}{\exp(r_\theta(\tau_a)) + \exp(r_\theta(\tau_b))} = \sigma\!\left(r_\theta(\tau_a) - r_\theta(\tau_b)\right)$$
+      This is equivalent to logistic regression on the difference in cumulative rewards.
+    </div>
+
+    <p>The training objective follows directly: maximize the log-likelihood of the observed preferences:</p>
+
+    $$\max_\theta \; \E_{\tau_w, \tau_l}\!\left[\log \sigma\!\left(r_\theta(\tau_w) - r_\theta(\tau_l)\right)\right]$$
+
+    <p>where $\tau_w \succ \tau_l$ indicates that $\tau_w$ was preferred by the human annotator. This is simply binary cross-entropy loss, a familiar supervised learning objective. The reward model $r_\theta$ is typically parameterized as a neural network that takes a state-action pair (or an entire trajectory) as input and outputs a scalar reward.</p>
+
+    <details class="proof">
+      <summary>Derivation of the preference loss</summary>
+      <div class="proof-content">
+        <p>We model human preferences as a noisy comparison process. Given two trajectories $\tau_a$ and $\tau_b$, the human prefers $\tau_a$ with probability proportional to the exponentiated total reward of $\tau_a$:</p>
+        $$P(\tau_a \succ \tau_b) = \frac{\exp(r_\theta(\tau_a))}{\exp(r_\theta(\tau_a)) + \exp(r_\theta(\tau_b))}$$
+        <p>Taking the log of this probability when $\tau_a = \tau_w$ (the winner):</p>
+        $$\log P(\tau_w \succ \tau_l) = \log \frac{\exp(r_\theta(\tau_w))}{\exp(r_\theta(\tau_w)) + \exp(r_\theta(\tau_l))}$$
+        $$= r_\theta(\tau_w) - \log(\exp(r_\theta(\tau_w)) + \exp(r_\theta(\tau_l)))$$
+        $$= \log \sigma(r_\theta(\tau_w) - r_\theta(\tau_l))$$
+        <p>where $\sigma(x) = 1/(1 + \exp(-x))$ is the sigmoid function. Maximizing this over all preference pairs gives the Bradley-Terry loss.</p>
+      </div>
+    </details>
+
+    <!-- Section 5: The Reward Learning Algorithm -->
+    <h2 id="reward-learning-algorithm">The Complete Reward Learning Algorithm</h2>
+
+    <p>Putting the pieces together, the full reward learning pipeline operates as follows:</p>
+
+    <div class="algorithm">
+      <div class="algorithm-title">Reward Learning from Preferences</div>
+      <ol>
+        <li><strong>Sample trajectories.</strong> Given a dataset $\{\tau_i\}$, sample batches of $k$ trajectories and present them to human annotators for ranking. (For LLMs, these $k$ trajectories all share the same prompt.)</li>
+        <li><strong>Compute rewards.</strong> Evaluate $r_\theta(\tau_1), \ldots, r_\theta(\tau_k)$ under the current reward model $r_\theta$.</li>
+        <li><strong>Compute gradients.</strong> For all $\binom{k}{2}$ pairs per batch, compute $\nabla_\theta \E_{\tau_w, \tau_l}[\log \sigma(r_\theta(\tau_w) - r_\theta(\tau_l))]$ where $\tau_w \succ \tau_l$.</li>
+        <li><strong>Update reward model.</strong> Update $\theta$ using the computed gradient.</li>
+      </ol>
+      <p>This can be performed offline on a fixed dataset of comparisons, or in the loop of online RL, where the policy generates new trajectories for humans to compare.</p>
+    </div>
+
+    <p>An important design choice is whether reward learning happens <strong>offline</strong> (collect all preferences first, then train a reward model and use it for RL) or <strong>online</strong> (interleave preference collection with policy training). Online reward learning can be more sample-efficient because the policy generates increasingly relevant trajectories for the human to compare, but it requires human annotators to be available during training.</p>
+
+    <div class="callout example">
+      <div class="callout-label">Example</div>
+      <strong>Learning Backflips from 900 Queries.</strong> Christiano et al. (NeurIPS 2017) demonstrated that a simulated agent could learn complex behaviors like backflips using only 900 human preference queries, combined with online RL. The human simply watched pairs of short video clips and indicated which one was better. The reward model trained from these comparisons was sufficient to drive the agent to discover the desired behavior.
+    </div>
+
+    <!-- Section 6: RLHF for Large Language Models -->
+    <h2 id="rlhf">Reinforcement Learning from Human Feedback (RLHF)</h2>
+
+    <p>The most impactful application of preference-based reward learning has been in aligning large language models (LLMs). The <strong>RLHF pipeline</strong> has become the standard approach for training models like ChatGPT, Claude, and Gemini to be helpful, harmless, and honest.</p>
+
+    <h3 id="rlhf-pipeline">The Three-Stage RLHF Pipeline</h3>
+
+    <p>Modern LLM training typically follows three stages:</p>
+
+    <div class="algorithm">
+      <div class="algorithm-title">RLHF Pipeline for LLMs</div>
+      <ol>
+        <li><strong>Large-scale pre-training.</strong> Train the model on massive text corpora using next-token prediction. The resulting model has broad language capabilities but mixed quality&mdash;it can generate both excellent and terrible responses.</li>
+        <li><strong>Supervised fine-tuning (SFT).</strong> Fine-tune on a curated dataset of high-quality (prompt, response) pairs. This teaches the model the <em>format</em> of good responses.</li>
+        <li><strong>RL from human feedback (RLHF):</strong>
+          <ol type="a">
+            <li><strong>Gather preference data.</strong> For each prompt $x$, sample two (or more) responses $y$ and $y'$ from the SFT model. Ask human annotators which response is better: $y \succ y'$.</li>
+            <li><strong>Train reward model.</strong> Train a reward model $r(x, y)$ that judges how good a response $y$ is for a prompt $x$, using the Bradley-Terry loss on the preference data.</li>
+            <li><strong>RL to maximize reward.</strong> Fine-tune the language model to produce responses with high reward, typically using PPO with a KL penalty against the SFT model to prevent reward hacking.</li>
+          </ol>
+        </li>
+      </ol>
+    </div>
+
+    <p>In the LLM setting, a "trajectory" is a (prompt, response) pair. The prompt plays the role of the state, and the response (a sequence of tokens) plays the role of a sequence of actions. The reward model $r(x, y)$ takes a full prompt-response pair and outputs a scalar score.</p>
+
+    <div class="callout insight">
+      <div class="callout-label">Key Insight</div>
+      The power of RLHF lies in the observation that <strong>critique is easier than generation</strong>. A human may not be able to write a perfect response to a complex question, but they can usually tell which of two responses is better. This asymmetry between generation and evaluation is what makes preference-based learning practical at scale.
+    </div>
+
+    <!-- Section 7: RLAIF and AI Feedback -->
+    <h2 id="rlaif">Beyond Human Feedback: AI Feedback</h2>
+
+    <p>Collecting human preferences is expensive and slow. A natural question is: can we replace human annotators with AI? This leads to <strong>Reinforcement Learning from AI Feedback (RLAIF)</strong>, introduced by Bai et al. (2022) in their work on Constitutional AI.</p>
+
+    <p>The core idea is to ask another language model to evaluate which of two responses is better, using criteria specified in a "constitution"&mdash;a set of principles like "choose the response that is less harmful" or "choose the response that is more helpful and truthful." The key insight is the same: <strong>critique is easier than generation</strong>. Even if an AI model cannot generate a perfect response, it may be able to reliably judge which of two responses better adheres to a given principle.</p>
+
+    <div class="callout example">
+      <div class="callout-label">Example</div>
+      <strong>Constitutional AI.</strong> Bai et al. (2022) showed that using AI-generated feedback to train reward models can achieve a Pareto improvement over standard RLHF on both helpfulness and harmlessness. Their "Constitutional RL" approach, combined with chain-of-thought reasoning for the evaluator, produced models that were simultaneously more helpful and more harmless than those trained with human feedback alone.
+    </div>
+
+    <p>RLAIF dramatically reduces the cost of preference data collection and enables scaling to much larger datasets. However, it introduces its own challenges: the AI evaluator may have systematic biases, and its judgments are only as good as the principles it follows and the capabilities of the evaluating model.</p>
+
+    <!-- Section 8: Practical Considerations -->
+    <h2 id="practical-considerations">Practical Considerations in Reward Learning</h2>
+
+    <p>Several practical issues arise when deploying reward learning in real systems:</p>
+
+    <h3 id="reward-hacking">Reward Hacking</h3>
+    <p>Just as RL agents can exploit errors in hand-designed rewards, they can exploit errors in <em>learned</em> rewards. The reward model is trained on a finite dataset and may not generalize perfectly to the states the optimized policy visits. Common mitigations include:</p>
+    <ul>
+      <li><strong>KL regularization:</strong> Constrain the learned policy to stay close to the reference (SFT) policy using a KL penalty.</li>
+      <li><strong>Ensemble reward models:</strong> Train multiple reward models and use their agreement to estimate uncertainty.</li>
+      <li><strong>Online reward learning:</strong> Continuously update the reward model as the policy improves, similar to the adversarial classifier approach.</li>
+    </ul>
+
+    <h3 id="human-consistency">Human Consistency and Noise</h3>
+    <p>Human preferences are noisy and inconsistent. Different annotators may disagree, and even the same annotator may give different judgments at different times. The Bradley-Terry model handles this gracefully through its probabilistic formulation&mdash;it models preferences as noisy observations of an underlying quality score. However, systematic biases (e.g., preferring longer responses regardless of quality) can be problematic and require careful data collection protocols.</p>
+
+    <h3 id="active-learning">Active Preference Queries</h3>
+    <p>Not all trajectory pairs are equally informative. <strong>Active preference learning</strong> (Sadigh et al., RSS 2017) selects the most informative pairs to present to human annotators, reducing the total number of queries needed. The most informative pairs are typically those where the current reward model is most uncertain about which trajectory is better.</p>
+
+    <!-- Section 9: Unsupervised Goal Discovery -->
+    <h2 id="unsupervised-goals">Can RL Agents Propose Their Own Goals?</h2>
+
+    <p>Beyond learning rewards from human supervision, an emerging research direction asks whether RL agents can discover their own goals through <strong>unsupervised RL</strong>. One compelling approach formulates a two-player game between a <em>goal-setter</em> (Alice) and a <em>goal-reacher</em> (Bob).</p>
+
+    <p>Alice proposes goals that she believes Bob cannot achieve, and Bob tries to achieve them. Through this adversarial self-play, Bob develops increasingly general skills without any external reward signal. These pre-trained skills can then be rapidly adapted to downstream tasks with minimal supervision.</p>
+
+    <div class="callout example">
+      <div class="callout-label">Example</div>
+      <strong>Asymmetric Self-Play.</strong> Sukhbaatar et al. (ICLR 2018) demonstrated this approach in a grid-world environment. Alice navigates through rooms and challenges Bob to reach her final position. This forces Bob to learn general navigation skills&mdash;including key-finding and door-opening&mdash;without any task-specific reward. When later given a target task, Bob can leverage these pre-trained skills for rapid learning.
+    </div>
+
+    <!-- Section 10: Summary -->
+    <h2 id="summary">Summary</h2>
+
+    <p>The central takeaway of this lecture is that <strong>rewards cannot be taken for granted</strong>. In real-world RL applications, specifying the reward function is often the hardest part of the problem. This lecture covered three approaches to reward learning, each with distinct trade-offs:</p>
+
+    <table>
+      <thead>
+        <tr>
+          <th></th>
+          <th>Learning from Goals/Demos</th>
+          <th>Learning from Preferences</th>
+        </tr>
+      </thead>
+      <tbody>
+        <tr>
+          <td><strong>Strengths</strong></td>
+          <td>Practical framework for task specification; only needs outcome examples</td>
+          <td>Pairwise preferences are easy to provide; does not require demonstrations; has been deployed at scale (RLHF)</td>
+        </tr>
+        <tr>
+          <td><strong>Weaknesses</strong></td>
+          <td>Adversarial training can be unstable; requires examples of desired behavior or outcomes</td>
+          <td>May require supervision in the loop of RL; usually requires more total human time</td>
+        </tr>
+      </tbody>
+    </table>
+
+    <p>The key ideas to take away are:</p>
+    <ol>
+      <li><strong>Task specification is hard</strong>, and naive approaches (static classifiers, proxy rewards) can be exploited by RL agents.</li>
+      <li><strong>Goal classifiers</strong> with adversarial training provide a practical framework when examples of desired outcomes are available.</li>
+      <li><strong>The Bradley-Terry model</strong> provides a principled framework for learning rewards from pairwise preferences, leading to the widely-used RLHF pipeline.</li>
+      <li><strong>RLHF has been deployed at scale</strong> for LLM alignment, and RLAIF extends this by replacing human annotators with AI evaluators.</li>
+      <li><strong>Reward hacking</strong> remains a central challenge: any learned reward model can be exploited by a sufficiently powerful optimizer.</li>
+    </ol>
+
   </article>
 
   <nav class="lecture-nav">

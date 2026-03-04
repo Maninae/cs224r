@@ -46,14 +46,311 @@
       <span class="lecture-tag">IQL</span>
       <span class="lecture-tag">Distributional Shift</span>
     </div>
-    <a class="lecture-pdf-link" href="../slides/cs224r_2025_lecture7.pdf" target="_blank">
+    <a class="lecture-pdf-link" href="../slides/07_cs224r_offline_rl_2025.pdf" target="_blank">
       <svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/></svg>
       Original PDF slides
     </a>
   </div>
 
   <article class="lecture-article">
-    <!-- Content will be added in Phase 3 -->
+
+    <!-- Section 1: Why Offline RL? -->
+    <h2 id="why-offline-rl">Why Offline RL?</h2>
+
+    <p>Throughout this course, we have studied reinforcement learning algorithms that alternate between collecting data in the environment and improving a policy. Whether on-policy (collecting fresh data each iteration) or off-policy (reusing a replay buffer), these methods assume the agent can <em>continuously interact</em> with the environment. But what if we cannot?</p>
+
+    <p>In many real-world settings, online data collection is expensive, dangerous, or simply infeasible. A hospital cannot randomly assign treatments to patients just to explore. A self-driving car company cannot deploy untested policies on public roads. A robotics lab may have terabytes of data from previous experiments but no budget for new ones. These scenarios motivate <strong>offline reinforcement learning</strong>&mdash;also called <strong>batch RL</strong>&mdash;where we must learn the best possible policy from a fixed, pre-collected dataset, with no further environment interaction.</p>
+
+    <div class="callout definition">
+      <div class="callout-label">Definition</div>
+      <strong>Offline Reinforcement Learning.</strong> Given a static dataset $\mathcal{D} = \{(s, a, s', r)\}$ collected by some unknown <strong>behavior policy</strong> $\piB$, learn a policy $\pi_\theta$ that maximizes the expected cumulative reward:
+      $$\max_\theta \; \E_{p_{\theta}(\tau)}\!\left[\sum_t r(s_t, a_t)\right]$$
+      The key constraint is that the expectation under the <em>learned</em> policy $\pi_\theta$ must be optimized using only data from $\piB$.
+    </div>
+
+    <h3 id="online-vs-offline">Online vs. Offline</h3>
+
+    <p>The distinction is straightforward but consequential:</p>
+    <ul>
+      <li><strong>Online RL</strong> (on-policy or off-policy): Repeatedly collect data, then update the policy on the latest data or all data so far.</li>
+      <li><strong>Offline RL</strong>: Given a static dataset, train a policy on that dataset alone. No new environment interaction is permitted.</li>
+    </ul>
+
+    <p>Offline RL is especially valuable when we can leverage datasets collected by people, hand-designed controllers, or previous RL experiments. It also enables reuse of data across projects and institutions, and it avoids the safety risks of deploying partially-trained policies. A common practical workflow is <strong>offline pre-training followed by online fine-tuning</strong>, combining the data efficiency of offline methods with the performance of online adaptation.</p>
+
+    <h3 id="data-sources">Where Does the Data Come From?</h3>
+
+    <p>The offline dataset $\mathcal{D}$ can originate from many sources:</p>
+    <ul>
+      <li>Human-collected data (e.g., teleoperation of robots, clinical records)</li>
+      <li>Data from hand-designed systems or controllers</li>
+      <li>Data from previous RL runs</li>
+      <li>A mixture of sources, meaning $\piB$ may actually be a mixture of many different policies</li>
+    </ul>
+
+    <div class="callout insight">
+      <div class="callout-label">Key Insight</div>
+      The behavior policy $\piB$ is typically unknown and may be a mixture of many different policies with varying quality levels. This heterogeneity is both a challenge (the data distribution is complex) and an opportunity (the dataset may contain some excellent trajectories alongside mediocre ones).
+    </div>
+
+    <!-- Section 2: The Distribution Shift Problem -->
+    <h2 id="distributional-shift">The Distributional Shift Problem</h2>
+
+    <p>A natural first attempt at offline RL would be to simply run an off-policy algorithm&mdash;such as SAC&mdash;on the static dataset, treating it as a fixed replay buffer. After all, off-policy methods are designed to learn from data collected by a different policy. Can we just do that?</p>
+
+    <p>Unfortunately, the answer is <strong>no</strong>&mdash;at least not without modification. The core issue is <strong>distributional shift</strong> between the behavior policy $\piB$ and the learned policy $\pi_\theta$.</p>
+
+    <h3 id="q-overestimation">How Overestimation Arises</h3>
+
+    <p>Recall the standard off-policy critic objective (e.g., from SAC):</p>
+
+    $$\min_\phi \sum_{(s,a,s') \sim \mathcal{D}} \left\| \hat{Q}^{\pi_\theta}_\phi(s, a) - \left(r(s,a) + \gamma \E_{a' \sim \pi_\theta(\cdot|s')}[\hat{Q}^{\pi_\theta}_\phi(s', a')]\right) \right\|^2$$
+
+    <p>The critical problem lies in the target computation: we must evaluate $\hat{Q}(s', a')$ where $a' \sim \pi_\theta(\cdot|s')$. But $\pi_\theta$ is being optimized to select actions that maximize $Q$, so it will choose actions where $Q$ is large. If those actions are <strong>out-of-distribution (OOD)</strong>&mdash;meaning they were rarely or never taken by $\piB$ at state $s'$&mdash;then the $Q$-function has never been trained on them and its output is essentially random.</p>
+
+    <p>This creates a vicious cycle:</p>
+    <ol>
+      <li>The randomly initialized $Q$-function has arbitrary values on OOD actions.</li>
+      <li>The policy selects actions where $Q$ happens to be high (likely OOD actions, since the $Q$ landscape is noisy outside the data support).</li>
+      <li>The Bellman backup propagates these overestimates to in-distribution state-action pairs.</li>
+      <li>After the policy update, $Q$-values become substantially overestimated everywhere.</li>
+    </ol>
+
+    <div class="callout example">
+      <div class="callout-label">Example</div>
+      <strong>The OOD Action Problem.</strong> Imagine a randomly initialized $Q$-function for some state $s'$. It produces an arbitrary, wavy curve over the action space. The dataset only contains actions in a narrow region (the "data support"). Outside this region, $Q$ may exhibit spurious peaks. The policy, seeking to maximize $Q$, will select these spurious peaks. Their inflated values then get backed up into the $Q$-estimates for other states, causing a cascading overestimation.
+    </div>
+
+    <p>From another perspective, the learned policy <em>deviates too much from the behavior policy</em>. In online RL, this mismatch is self-correcting: the agent collects new data under $\pi_\theta$, and the $Q$-function is trained on that data. In offline RL, no such correction is possible. Mitigating this overestimation is the <strong>core goal</strong> of offline RL methods.</p>
+
+    <!-- Section 3: Offline RL vs. Imitation Learning -->
+    <h2 id="offline-vs-imitation">Offline RL versus Imitation Learning</h2>
+
+    <p>Before diving into solutions, it is worth asking: why not just do imitation learning on the offline dataset? If we have demonstrations, we could simply clone the behavior policy via supervised learning. The answer lies in a fundamental limitation of imitation learning: <strong>it cannot outperform the demonstrator</strong>.</p>
+
+    <p>Offline data may not be optimal. It might contain a mixture of good and bad trajectories collected by different policies or by the same policy at different stages of learning. Offline RL can leverage <strong>reward information</strong> to do something imitation learning cannot: <strong>stitch together</strong> good segments from different trajectories to synthesize a policy better than any individual trajectory in the dataset.</p>
+
+    <div class="callout example">
+      <div class="callout-label">Example</div>
+      <strong>Trajectory Stitching.</strong> Consider a dataset with two trajectories: one that navigates well from $s_1$ to $s_3$, and another that navigates well from $s_7$ to $s_9$ (the goal). Neither trajectory alone reaches the goal from $s_1$. But by using reward information and dynamic programming, an offline RL method can learn a policy that goes from $s_1$ all the way to $s_9$, combining the best segments. Imitation learning, which only copies the demonstrator's actions, cannot discover this composite strategy.
+    </div>
+
+    <p>This stitching ability is the key advantage of offline RL over imitation learning. It is also what makes the problem harder: stitching requires evaluating actions that no single trajectory in the dataset took, which brings us back to the distributional shift challenge.</p>
+
+    <!-- Section 4: Filtered and Weighted Imitation -->
+    <h2 id="filtered-weighted-imitation">Filtered and Weighted Imitation Learning</h2>
+
+    <p>The simplest approach to using reward information in the offline setting is to stay close to imitation learning but incorporate reward signals. This gives us two simple baselines that are often surprisingly effective.</p>
+
+    <h3 id="filtered-bc">Filtered Behavior Cloning</h3>
+
+    <p>The idea is straightforward: if we have reward labels, only imitate the <em>good</em> trajectories.</p>
+
+    <div class="algorithm">
+      <div class="algorithm-title">Filtered Behavior Cloning</div>
+      <ol>
+        <li>Rank trajectories by return: $r(\tau) = \sum_{(s_t, a_t) \in \tau} r(s_t, a_t)$</li>
+        <li>Filter the dataset to include only the top $k\%$: $\tilde{D} = \{\tau \mid r(\tau) > \eta\}$</li>
+        <li>Imitate the filtered dataset: $\max_\theta \sum_{(s,a) \in \tilde{D}} \log \pi_\theta(a \mid s)$</li>
+      </ol>
+    </div>
+
+    <p>This is a very primitive approach to using reward information. It discards potentially useful transitions from mediocre trajectories and cannot perform trajectory stitching. However, it is simple and makes a <strong>good baseline</strong> to test against.</p>
+
+    <h3 id="advantage-weighted-regression">Advantage-Weighted Regression (AWR)</h3>
+
+    <p>Rather than binary filtering, we can <em>weight</em> each transition by how good the action was. This leads to a more principled approach based on the advantage function.</p>
+
+    <p>Recall that the advantage function $A^\pi(s_t, a_t) = Q^\pi(s_t, a_t) - V^\pi(s_t)$ measures how much better action $a_t$ is compared to the average action under policy $\pi$. The advantage-weighted imitation objective is:</p>
+
+    $$\theta \leftarrow \arg\max_\theta \; \E_{s, a \sim D}\!\left[\log \pi_\theta(a \mid s) \exp(A(s, a))\right]$$
+
+    <p>This is simply standard imitation learning (the $\log \pi_\theta$ term) reweighted by the exponentiated advantage (the $\exp(A)$ term). Transitions with high advantage receive more weight; transitions with low advantage are effectively downweighted.</p>
+
+    <div class="callout theorem">
+      <div class="callout-label">Theorem</div>
+      <strong>Connection to KL-Constrained RL.</strong> The advantage-weighted regression objective can be shown to approximate the solution to the KL-constrained policy improvement problem:
+      $$\pi_{\text{new}} = \arg\max_\pi \; \E_{a \sim \pi(\cdot|s)}[Q(s, a)] \quad \text{s.t.} \quad \Dkl(\pi \| \piB) < \epsilon$$
+      This means AWR implicitly keeps the learned policy close to the behavior policy while improving it.
+    </div>
+
+    <p>The key question for AWR is: <strong>how do we estimate the advantage function?</strong> The simplest approach uses Monte Carlo estimation:</p>
+
+    <div class="algorithm">
+      <div class="algorithm-title">Advantage-Weighted Regression (AWR)</div>
+      <ol>
+        <li><strong>Fit value function</strong> via Monte Carlo regression: $\min_\phi \sum_{s_t \sim \mathcal{D}} \left\| \hat{V}^{\piB}_\phi(s_t) - \sum_{t'=t}^{T} r(s_{t'}, a_{t'}) \right\|^2$</li>
+        <li><strong>Train policy</strong> with advantage weights: $\max_\theta \; \E_{(s_t, a_t) \sim \mathcal{D}} \left[\log \pi_\theta(a_t | s_t) \exp\!\left(\frac{1}{\alpha}\left(\sum_{t'=t}^{T} r(s_{t'}, a_{t'}) - \hat{V}^{\piB}_\phi(s_t)\right)\right)\right]$</li>
+      </ol>
+      <p>The temperature $\alpha$ is a hyperparameter controlling how sharply the weights distinguish good from bad actions.</p>
+    </div>
+
+    <p>AWR has important advantages: it is simple, and it <strong>avoids querying $Q$-values on OOD actions</strong> entirely. However, Monte Carlo estimation is noisy, and the advantage $\hat{A}^{\piB}$ is computed for the behavior policy rather than the learned policy $\pi_\theta$, which limits how much improvement is possible.</p>
+
+    <!-- Section 5: Implicit Q-Learning (IQL) -->
+    <h2 id="implicit-q-learning">Implicit Q-Learning (IQL)</h2>
+
+    <p>Can we do better than AWR while still avoiding the OOD action problem? The key insight of <strong>Implicit Q-Learning</strong> (Kostrikov, Nair, and Levine, ICLR 2022) is to estimate Q-values using TD updates but to <em>never query the $Q$-function on actions outside the dataset</em>.</p>
+
+    <h3 id="awac">From AWAC to IQL</h3>
+
+    <p>A first improvement over AWR is to estimate advantages using TD learning instead of Monte Carlo. The <strong>Advantage-Weighted Actor-Critic (AWAC)</strong> approach estimates the $Q$-function with:</p>
+
+    $$\hat{Q}^{\piB} \leftarrow \arg\min_Q \; \E_{(s,a,s',a') \sim D}\!\left[\left(Q(s, a) - \left(r + \gamma Q(s', a')\right)\right)^2\right]$$
+
+    <p>Here, the next action $a'$ is sampled from the <em>dataset</em> (not from $\pi_\theta$), so we never query $Q$ on OOD actions. This gives a $Q$-function estimate for $\piB$, not for $\pi_\theta$. But can we estimate $Q$ for a policy <em>better</em> than $\piB$?</p>
+
+    <h3 id="expectile-regression">Expectile Regression</h3>
+
+    <p>The key idea in IQL is to replace the standard mean squared error loss with an <strong>asymmetric loss</strong> called the <strong>expectile regression loss</strong>. Instead of fitting the mean of a random variable (which standard $\ell_2$ loss does), expectile regression can fit a higher or lower "expectile"&mdash;analogous to a quantile but based on squared rather than absolute errors.</p>
+
+    <div class="callout definition">
+      <div class="callout-label">Definition</div>
+      <strong>Expectile Regression Loss.</strong> For a parameter $\lambda \in (0, 1)$, the expectile loss is:
+      $$\ell_2^\lambda(x) = \begin{cases} (1 - \lambda) x^2 & \text{if } x < 0 \\ \lambda x^2 & \text{otherwise} \end{cases}$$
+      When $\lambda = 0.5$, this reduces to the standard squared error. When $\lambda > 0.5$, the loss penalizes <em>underestimation</em> more heavily, pushing the fit toward higher values of the distribution. When $\lambda < 0.5$, it favors lower values.
+    </div>
+
+    <p>Think of it this way: if we use $\ell_2$ loss to regress $V(s)$ onto the distribution of $Q(s, a)$ values for $a \sim \piB(\cdot|s)$, we recover the mean&mdash;i.e., $V^{\piB}(s)$. But if we use the asymmetric loss $\ell_2^\lambda$ with $\lambda > 0.5$, we recover a value closer to the maximum of the distribution&mdash;approximating the value function of the <em>best policy within the data support</em>.</p>
+
+    <h3 id="iql-algorithm">The IQL Algorithm</h3>
+
+    <p>IQL uses expectile regression to fit a value function for a policy that is implicitly better than the behavior policy, without ever querying $Q$ on OOD actions.</p>
+
+    <div class="algorithm">
+      <div class="algorithm-title">Implicit Q-Learning (IQL)</div>
+      <p>Repeat:</p>
+      <ol>
+        <li><strong>Fit $V$ with expectile loss:</strong> $\hat{V}(s) \leftarrow \arg\min_V \; \E_{(s,a) \sim D}\!\left[\ell_2^\lambda\!\left(V(s) - \hat{Q}(s, a)\right)\right]$ &nbsp;&nbsp; using $\lambda < 0.5$</li>
+        <li><strong>Update $Q$ with standard MSE loss:</strong> $\hat{Q}(s, a) \leftarrow \arg\min_Q \; \E_{(s,a,s') \sim D}\!\left[\left(Q(s, a) - \left(r + \gamma \hat{V}(s')\right)\right)^2\right]$</li>
+        <li><strong>Extract policy with AWR:</strong> $\hat{\pi} \leftarrow \arg\max_\pi \; \E_{s,a \sim D}\!\left[\log \pi(a \mid s) \exp\!\left(\frac{1}{\alpha}\left(\hat{Q}(s, a) - \hat{V}(s)\right)\right)\right]$</li>
+      </ol>
+    </div>
+
+    <p>The crucial point is that the $Q$-function is updated using $\hat{V}(s')$ instead of $\E_{a' \sim \pi}[\hat{Q}(s', a')]$. Since $V$ is a function of states only, no action sampling is needed, and we completely avoid querying $Q$ on OOD actions. Policy improvement happens <em>implicitly</em> through the asymmetric loss, hence the name "Implicit Q-Learning."</p>
+
+    <div class="callout insight">
+      <div class="callout-label">Key Insight</div>
+      IQL decouples the actor and critic training in a way that eliminates the OOD action problem entirely. The value function $V$ is trained to approximate the value of the best policy in the data support via expectile regression, the $Q$-function is trained using $V$ as the bootstrap target (avoiding action queries), and the policy is extracted via advantage-weighted regression on in-distribution actions only.
+    </div>
+
+    <!-- Section 6: Conservative Q-Learning (CQL) -->
+    <h2 id="conservative-q-learning">Conservative Q-Learning (CQL)</h2>
+
+    <p>While IQL avoids the OOD problem by never querying out-of-distribution actions, <strong>Conservative Q-Learning</strong> (Kumar et al., NeurIPS 2020) takes a different approach: it directly <em>penalizes</em> overestimated $Q$-values, producing a learned $Q$-function that is a <strong>lower bound</strong> on the true value.</p>
+
+    <h3 id="cql-intuition">The CQL Intuition</h3>
+
+    <p>The idea is simple: in addition to the standard critic loss, add a regularizer that pushes down $Q$-values for actions that are likely to be overestimated. Specifically, CQL adds a term that minimizes $Q$-values under some broad distribution $\mu$ over actions:</p>
+
+    $$\hat{Q}^\pi = \arg\min_Q \max_\mu \; \underbrace{\E_{(s,a,s') \sim D}\!\left[\left(Q(s, a) - \left(r(s,a) + \gamma \E_{a' \sim \pi}[Q(s', a')]\right)\right)^2\right]}_{\text{standard critic update}} + \alpha \underbrace{\E_{s \sim D, a \sim \mu(\cdot|s)}[Q(s, a)]}_{\text{push down on large } Q\text{-values}}$$
+
+    <div class="callout theorem">
+      <div class="callout-label">Theorem</div>
+      <strong>CQL Lower Bound (Version 1).</strong> For sufficiently large $\alpha$, the CQL objective produces a $Q$-function satisfying $\hat{Q}^\pi(s, a) \leq Q^\pi(s, a)$ for all $(s, a)$. That is, the learned $Q$-function is a pointwise lower bound on the true $Q$-function.
+    </div>
+
+    <h3 id="cql-push-up">Pushing Up In-Distribution Q-Values</h3>
+
+    <p>The basic version above is too conservative: it pushes down $Q$-values everywhere, including for in-distribution actions where the estimates may be accurate. CQL addresses this by adding a counterbalancing term that pushes <em>up</em> $Q$-values for state-action pairs actually in the dataset:</p>
+
+    $$\hat{Q}^\pi = \arg\min_Q \max_\mu \; \E_{(s,a,s') \sim D}\!\left[\left(Q(s, a) - \left(r + \gamma \E_\pi[Q(s', a')]\right)\right)^2\right] + \alpha \E_{s \sim D, a \sim \mu(\cdot|s)}[Q(s, a)] - \alpha \E_{(s,a) \sim D}[Q(s, a)]$$
+
+    <p>The third term pushes up $Q$-values for $(s, a)$ pairs in the data. This means CQL pushes <em>down</em> on OOD actions and pushes <em>up</em> on in-distribution actions.</p>
+
+    <div class="callout theorem">
+      <div class="callout-label">Theorem</div>
+      <strong>CQL Lower Bound (Version 2).</strong> With the push-up term, it is no longer guaranteed that $\hat{Q}^\pi(s, a) \leq Q^\pi(s, a)$ for all individual $(s, a)$ pairs. However, the <em>expected</em> $Q$-value under the learned policy is still a lower bound:
+      $$\E_{\pi(a|s)}[\hat{Q}^\pi(s, a)] \leq \E_{\pi(a|s)}[Q^\pi(s, a)] \quad \text{for all } s \in D$$
+      This is sufficient for safe policy improvement, since the policy uses expected $Q$-values for action selection.
+    </div>
+
+    <h3 id="cql-algorithm">The Full CQL Algorithm</h3>
+
+    <div class="algorithm">
+      <div class="algorithm-title">Conservative Q-Learning (CQL)</div>
+      <p>Repeat:</p>
+      <ol>
+        <li><strong>Update $\hat{Q}^\pi$</strong> using the CQL loss $L_{\text{CQL}}$ on dataset $D$.</li>
+        <li><strong>Update policy $\pi$:</strong>
+          <ul>
+            <li>If actions are discrete: $\pi(a \mid s) = \begin{cases} 1 & \text{if } a = \arg\max_{\bar{a}} \hat{Q}^\pi(s, \bar{a}) \\ 0 & \text{otherwise} \end{cases}$</li>
+            <li>If actions are continuous: $\theta \leftarrow \theta + \eta \nabla_\theta \E_{s \sim D, a \sim \pi_\theta(\cdot|s)}[\hat{Q}^\pi(s, a)]$</li>
+          </ul>
+        </li>
+      </ol>
+    </div>
+
+    <h3 id="cql-practical">Computing the CQL Objective in Practice</h3>
+
+    <p>The CQL objective involves a maximization over the distribution $\mu$. With a maximum-entropy regularizer $R(\mu) = \E_{s \sim D}[\mathcal{H}(\mu(\cdot|s))]$, the optimal $\mu$ takes a simple closed form:</p>
+
+    $$\mu(a \mid s) \propto \exp(Q(s, a))$$
+
+    <p>Substituting this back, the penalty term becomes a log-sum-exp:</p>
+
+    $$\E_{s \sim D, a \sim \mu(\cdot|s)}[Q(s, a)] = \log \sum_a \exp(Q(s, a))$$
+
+    <p>This means we do not need to explicitly construct $\mu$&mdash;we simply compute the log-sum-exp of $Q$-values over the action space, which is straightforward for discrete actions and can be approximated by sampling for continuous actions.</p>
+
+    <details class="proof">
+      <summary>Derivation of the log-sum-exp form</summary>
+      <div class="proof-content">
+        <p>We want to solve $\max_\mu \E_{a \sim \mu(\cdot|s)}[Q(s, a)] + \mathcal{H}(\mu(\cdot|s))$. The entropy-regularized maximization has the well-known solution $\mu^*(a|s) \propto \exp(Q(s,a))$, i.e., $\mu^*(a|s) = \frac{\exp(Q(s,a))}{\sum_{a'} \exp(Q(s, a'))}$.</p>
+        <p>Substituting back:</p>
+        $$\E_{a \sim \mu^*}[Q(s,a)] + \mathcal{H}(\mu^*) = \log \sum_a \exp(Q(s,a))$$
+        <p>This is exactly the log-sum-exp (or "soft maximum") of the $Q$-values, which serves as a smooth upper envelope over actions. CQL penalizes this quantity, effectively pushing down $Q$-values where $Q$ is largest&mdash;precisely the OOD actions that may be overestimated.</p>
+      </div>
+    </details>
+
+    <!-- Section 7: Practical Application -->
+    <h2 id="practical-application">A Practical Application: LinkedIn Notifications</h2>
+
+    <p>Offline RL is not just a theoretical framework&mdash;it has seen real-world deployment. A compelling example comes from LinkedIn, which used CQL to optimize its notification-sending policy (Prabhakar, Yuan, Yang, Sun, and Muralidharan, 2022).</p>
+
+    <p>The challenge was multi-objective: maximize weekly active users (WAU) and click-through rate (CTR) while controlling the total volume of notifications. Online experimentation with RL would be risky&mdash;sending too many or poorly-timed notifications could drive users away. Instead, LinkedIn used offline RL on historical notification data.</p>
+
+    <div class="callout example">
+      <div class="callout-label">Example</div>
+      <strong>LinkedIn Notification Optimization.</strong> In online A/B testing, a standard DDQN policy (without conservatism) increased notification volume by 7.72% but decreased WAU by 0.69% and CTR by 7.79%. Adding CQL to the DDQN pipeline produced dramatically better results: sessions increased by 0.24%, WAU by 0.18%, and CTR by 2.26%, while reducing volume by 1.73%. The conservative penalty prevented the policy from overestimating the value of aggressive notification strategies.
+    </div>
+
+    <!-- Section 8: Which Algorithm to Use? -->
+    <h2 id="algorithm-comparison">Comparing Offline RL Algorithms</h2>
+
+    <p>Given the variety of offline RL methods, how should a practitioner choose? The decision depends on the setting:</p>
+
+    <h3 id="offline-only">If You Only Want to Train Offline</h3>
+    <ul>
+      <li><strong>Filtered behavior cloning:</strong> A good first approach. Simple, hard to get wrong, and provides a sanity-check baseline.</li>
+      <li><strong>Implicit Q-Learning (IQL):</strong> Can stitch trajectories and is explicitly constrained to the data support. Requires tuning the expectile parameter $\lambda$ and the temperature $\alpha$.</li>
+      <li><strong>Conservative Q-Learning (CQL):</strong> Has just one key hyperparameter ($\alpha$, the conservatism coefficient). Can be more robust when the data distribution is complex.</li>
+    </ul>
+
+    <h3 id="offline-then-online">If You Want Offline Pre-Training + Online Fine-Tuning</h3>
+    <p>IQL appears to be the most performant choice for this workflow, as its implicit policy constraint makes it easier to transition to online data collection without catastrophic policy degradation.</p>
+
+    <div class="callout insight">
+      <div class="callout-label">Key Insight</div>
+      Offline RL is still an active area of research. Recent extensions include IDQL (Hansen-Estruch et al., 2023), which combines IQL with diffusion policies for more expressive policy classes. The field is rapidly evolving, and new methods continue to push the boundary of what is possible from static datasets.
+    </div>
+
+    <!-- Section 9: Summary -->
+    <h2 id="summary">Summary</h2>
+
+    <p>Offline reinforcement learning addresses the fundamental challenge of learning good policies from fixed datasets without further environment interaction. The key ideas covered in this lecture are:</p>
+
+    <ol>
+      <li><strong>Why offline RL?</strong> Online data collection is expensive, risky, or infeasible in many real-world applications. Reusing offline data is both practical and efficient.</li>
+      <li><strong>The distributional shift challenge:</strong> Naively applying off-policy methods to static datasets leads to catastrophic overestimation of $Q$-values on out-of-distribution actions.</li>
+      <li><strong>Offline RL vs. imitation learning:</strong> Unlike imitation, offline RL can leverage reward information and trajectory stitching to learn policies that outperform the behavior policy.</li>
+      <li><strong>Filtered and weighted imitation:</strong> Simple baselines that incorporate reward information into behavior cloning, including advantage-weighted regression (AWR).</li>
+      <li><strong>Implicit policy constraint methods (IQL):</strong> Avoid OOD queries entirely by using expectile regression to implicitly estimate the value of an improved policy.</li>
+      <li><strong>Conservative methods (CQL):</strong> Directly penalize potentially overestimated $Q$-values to produce a lower-bound estimate, enabling safe policy improvement.</li>
+    </ol>
+
+    <p>The central lesson is that successful offline RL requires explicit mechanisms to prevent the policy from exploiting errors in the learned value function at out-of-distribution actions. Whether through implicit constraints (IQL) or explicit conservatism (CQL), all effective offline RL methods address this core challenge.</p>
+
   </article>
 
   <nav class="lecture-nav">
